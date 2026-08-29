@@ -24,6 +24,7 @@
   <ItemGroup>
     <Content Include=".env.example" />
     <Content Include=".gitignore" />
+    <Content Include="docs\build_log\2026-08-29_lite-day-1-handoff.md" />
     <Content Include="docs\build_log\2026-08-29_lite-day-1.md" />
     <Content Include="docs\decisions\2026-08-29_authorization-boundary.md" />
     <Content Include="lockean-lite.slnx" />
