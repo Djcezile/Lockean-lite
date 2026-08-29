@@ -1,3 +1,4 @@
+import pytest
 from lockean_lite.lockean_authority import LockeanAuthority
 from lockean_lite.trade_proposal import TradeProposal
 
@@ -68,3 +69,19 @@ def test_authority_rejects_negative_contract_quantity():
     assert decision.status == "REJECTED"
     assert decision.reason == "invalid_contract_quantity"
     assert decision.proposal_id == "proposal-005"
+
+
+def test_authority_decision_is_immutable_after_rejection():
+    proposal = TradeProposal(
+        proposal_id="proposal-006",
+        symbol="SPY",
+        strategy="unlimited_risk_option",
+        contracts=1,
+    )
+
+    authority = LockeanAuthority()
+
+    decision = authority.evaluate(proposal)
+
+    with pytest.raises(AttributeError):
+        decision.status = "AUTHORIZED"
