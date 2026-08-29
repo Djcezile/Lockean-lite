@@ -34,3 +34,37 @@ def test_authority_rejects_supported_strategy_when_authorization_requirements_ar
     assert decision.status == "REJECTED"
     assert decision.reason == "authorization_requirements_incomplete"
     assert decision.proposal_id == "proposal-003"
+
+
+def test_authority_rejects_non_positive_contract_quantity():
+    proposal = TradeProposal(
+        proposal_id="proposal-004",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=0,
+    )
+
+    authority = LockeanAuthority()
+
+    decision = authority.evaluate(proposal)
+
+    assert decision.status == "REJECTED"
+    assert decision.reason == "invalid_contract_quantity"
+    assert decision.proposal_id == "proposal-004"
+
+
+def test_authority_rejects_negative_contract_quantity():
+    proposal = TradeProposal(
+        proposal_id="proposal-005",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=-1,
+    )
+
+    authority = LockeanAuthority()
+
+    decision = authority.evaluate(proposal)
+
+    assert decision.status == "REJECTED"
+    assert decision.reason == "invalid_contract_quantity"
+    assert decision.proposal_id == "proposal-005"
