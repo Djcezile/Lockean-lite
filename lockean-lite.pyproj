@@ -39,7 +39,9 @@
     <Folder Include="tests\" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="src\lockean_lite\trade_proposal.py" />
     <Compile Include="src\lockean_lite\__init__.py" />
+    <Compile Include="tests\test_trade_proposal.py" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in
