@@ -40,6 +40,13 @@ class LockeanAuthority:
             proposal_id=proposal.proposal_id,
         )
 
+        if any(leg.option_type != "call" for leg in proposal.legs):
+            return AuthorityDecision(
+            status="REJECTED",
+            reason="unsupported_option_type",
+            proposal_id=proposal.proposal_id,
+        )
+
         return AuthorityDecision(
         status="REJECTED",
         reason="authorization_requirements_incomplete",
