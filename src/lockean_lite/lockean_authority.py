@@ -99,6 +99,13 @@ class LockeanAuthority:
             proposal_id=proposal.proposal_id,
         )
 
+        if proposal.net_debit <= 0:
+            return AuthorityDecision(
+            status="REJECTED",
+            reason="invalid_net_debit",
+            proposal_id=proposal.proposal_id,
+        )
+
         if (
             proposal.net_debit is not None
             and self.maximum_allowed_loss is not None

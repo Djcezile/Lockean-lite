@@ -327,3 +327,71 @@ def test_authority_rejects_proposal_when_net_debit_is_missing():
     assert decision.status == "REJECTED"
     assert decision.reason == "missing_net_debit"
     assert decision.proposal_id == "proposal-015"
+
+def test_authority_rejects_proposal_when_net_debit_is_not_positive():
+    buy_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("500"),
+        expiration=date(2026, 9, 18),
+        side="buy",
+    )
+
+    sell_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("505"),
+        expiration=date(2026, 9, 18),
+        side="sell",
+    )
+
+    proposal = TradeProposal(
+        proposal_id="proposal-016",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=1,
+        legs=(buy_leg, sell_leg),
+        net_debit=Decimal("0"),
+    )
+
+    authority = LockeanAuthority(
+        maximum_allowed_loss=Decimal("150.00"),
+    )
+
+    decision = authority.evaluate(proposal)
+
+    assert decision.status == "REJECTED"
+    assert decision.reason == "invalid_net_debit"
+    assert decision.proposal_id == "proposal-016"
+
+def test_authority_rejects_proposal_when_net_debit_is_negative():
+    buy_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("500"),
+        expiration=date(2026, 9, 18),
+        side="buy",
+    )
+
+    sell_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("505"),
+        expiration=date(2026, 9, 18),
+        side="sell",
+    )
+
+    proposal = TradeProposal(
+        proposal_id="proposal-017",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=1,
+        legs=(buy_leg, sell_leg),
+        net_debit=Decimal("-0.50"),
+    )
+
+    authority = LockeanAuthority(
+        maximum_allowed_loss=Decimal("150.00"),
+    )
+
+    decision = authority.evaluate(proposal)
+
+    assert decision.status == "REJECTED"
+    assert decision.reason == "invalid_net_debit"
+    assert decision.proposal_id == "proposal-017"
