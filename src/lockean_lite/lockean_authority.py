@@ -47,6 +47,16 @@ class LockeanAuthority:
             proposal_id=proposal.proposal_id,
         )
 
+
+        sides = {leg.side for leg in proposal.legs}
+
+        if sides != {"buy", "sell"}:
+            return AuthorityDecision(
+            status="REJECTED",
+            reason="invalid_leg_sides",
+            proposal_id=proposal.proposal_id,
+        )
+
         return AuthorityDecision(
         status="REJECTED",
         reason="authorization_requirements_incomplete",

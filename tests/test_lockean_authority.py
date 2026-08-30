@@ -160,3 +160,35 @@ def test_authority_rejects_defined_risk_proposal_with_non_call_leg():
     assert decision.status == "REJECTED"
     assert decision.reason == "unsupported_option_type"
     assert decision.proposal_id == "proposal-009"
+
+
+def test_authority_rejects_defined_risk_proposal_without_one_buy_and_one_sell():
+    first_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("500"),
+        expiration=date(2026, 9, 18),
+        side="buy",
+    )
+
+    second_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("505"),
+        expiration=date(2026, 9, 18),
+        side="buy",
+    )
+
+    proposal = TradeProposal(
+        proposal_id="proposal-010",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=1,
+        legs=(first_leg, second_leg),
+    )
+
+    authority = LockeanAuthority()
+
+    decision = authority.evaluate(proposal)
+
+    assert decision.status == "REJECTED"
+    assert decision.reason == "invalid_leg_sides"
+    assert decision.proposal_id == "proposal-010"
