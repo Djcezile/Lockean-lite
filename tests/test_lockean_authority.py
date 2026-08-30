@@ -45,6 +45,7 @@ def test_authority_rejects_supported_strategy_when_authorization_requirements_ar
         strategy="defined_risk_option",
         contracts=1,
         legs=(buy_leg, sell_leg),
+        net_debit=Decimal("1.00"),
     )
 
     authority = LockeanAuthority()
@@ -291,3 +292,38 @@ def test_authority_rejects_proposal_when_maximum_loss_exceeds_policy_limit():
     assert decision.status == "REJECTED"
     assert decision.reason == "max_loss_exceeds_limit"
     assert decision.proposal_id == "proposal-014"
+
+def test_authority_rejects_proposal_when_net_debit_is_missing():
+    buy_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("500"),
+        expiration=date(2026, 9, 18),
+        side="buy",
+    )
+
+    sell_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("505"),
+        expiration=date(2026, 9, 18),
+        side="sell",
+    )
+
+    proposal = TradeProposal(
+        proposal_id="proposal-015",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=1,
+        legs=(buy_leg, sell_leg),
+        net_debit=None,
+
+    )
+
+    authority = LockeanAuthority(
+        maximum_allowed_loss=Decimal("150.00"),
+    )
+
+    decision = authority.evaluate(proposal)
+
+    assert decision.status == "REJECTED"
+    assert decision.reason == "missing_net_debit"
+    assert decision.proposal_id == "proposal-015"
