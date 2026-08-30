@@ -57,6 +57,16 @@ class LockeanAuthority:
             proposal_id=proposal.proposal_id,
         )
 
+
+        expirations = {leg.expiration for leg in proposal.legs}
+
+        if len(expirations) != 1:
+            return AuthorityDecision(
+            status="REJECTED",
+            reason="expiration_mismatch",
+            proposal_id=proposal.proposal_id,
+        )
+
         return AuthorityDecision(
         status="REJECTED",
         reason="authorization_requirements_incomplete",
