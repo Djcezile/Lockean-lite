@@ -67,6 +67,23 @@ class LockeanAuthority:
             proposal_id=proposal.proposal_id,
         )
 
+        buy_leg = next(
+        leg for leg in proposal.legs
+        if leg.side == "buy"
+    )
+
+        sell_leg = next(
+        leg for leg in proposal.legs
+        if leg.side == "sell"
+    )
+
+        if buy_leg.strike >= sell_leg.strike:
+            return AuthorityDecision(
+            status="REJECTED",
+            reason="invalid_strike_order",
+            proposal_id=proposal.proposal_id,
+        )
+
         return AuthorityDecision(
         status="REJECTED",
         reason="authorization_requirements_incomplete",

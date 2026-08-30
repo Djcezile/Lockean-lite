@@ -224,3 +224,35 @@ def test_authority_rejects_defined_risk_proposal_with_mismatched_expirations():
     assert decision.status == "REJECTED"
     assert decision.reason == "expiration_mismatch"
     assert decision.proposal_id == "proposal-011"
+
+
+def test_authority_rejects_defined_risk_proposal_with_invalid_strike_order():
+    buy_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("505"),
+        expiration=date(2026, 9, 18),
+        side="buy",
+    )
+
+    sell_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("500"),
+        expiration=date(2026, 9, 18),
+        side="sell",
+    )
+
+    proposal = TradeProposal(
+        proposal_id="proposal-012",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=1,
+        legs=(buy_leg, sell_leg),
+    )
+
+    authority = LockeanAuthority()
+
+    decision = authority.evaluate(proposal)
+
+    assert decision.status == "REJECTED"
+    assert decision.reason == "invalid_strike_order"
+    assert decision.proposal_id == "proposal-012"
