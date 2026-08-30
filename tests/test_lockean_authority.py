@@ -256,3 +256,38 @@ def test_authority_rejects_defined_risk_proposal_with_invalid_strike_order():
     assert decision.status == "REJECTED"
     assert decision.reason == "invalid_strike_order"
     assert decision.proposal_id == "proposal-012"
+
+
+def test_authority_rejects_proposal_when_maximum_loss_exceeds_policy_limit():
+    buy_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("500"),
+        expiration=date(2026, 9, 18),
+        side="buy",
+    )
+
+    sell_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("505"),
+        expiration=date(2026, 9, 18),
+        side="sell",
+    )
+
+    proposal = TradeProposal(
+        proposal_id="proposal-014",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=2,
+        legs=(buy_leg, sell_leg),
+        net_debit=Decimal("1.25"),
+    )
+
+    authority = LockeanAuthority(
+        maximum_allowed_loss=Decimal("150.00"),
+    )
+
+    decision = authority.evaluate(proposal)
+
+    assert decision.status == "REJECTED"
+    assert decision.reason == "max_loss_exceeds_limit"
+    assert decision.proposal_id == "proposal-014"
