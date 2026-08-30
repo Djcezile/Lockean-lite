@@ -48,3 +48,14 @@ def test_trade_proposal_preserves_exact_option_legs():
     )
 
     assert proposal.legs == (buy_leg, sell_leg)
+
+def test_trade_proposal_preserves_proposed_net_debit():
+    proposal = TradeProposal(
+        proposal_id="proposal-013",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=2,
+        net_debit=Decimal("1.25"),
+    )
+
+    assert proposal.net_debit == Decimal("1.25")

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from decimal import Decimal
 
 from lockean_lite.option_leg import OptionLeg
 
@@ -10,3 +11,4 @@ class TradeProposal:
     strategy: str
     contracts: int
     legs: tuple[OptionLeg, ...] = ()
+    net_debit: Decimal | None = None
