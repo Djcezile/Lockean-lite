@@ -1,6 +1,10 @@
 import pytest
 from lockean_lite.lockean_authority import LockeanAuthority
 from lockean_lite.trade_proposal import TradeProposal
+from datetime import date
+from decimal import Decimal
+
+from lockean_lite.option_leg import OptionLeg
 
 
 def test_authority_rejects_unsupported_strategy():
@@ -21,11 +25,26 @@ def test_authority_rejects_unsupported_strategy():
 
 
 def test_authority_rejects_supported_strategy_when_authorization_requirements_are_incomplete():
+    buy_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("500"),
+        expiration=date(2026, 9, 18),
+        side="buy",
+    )
+
+    sell_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("505"),
+        expiration=date(2026, 9, 18),
+        side="sell",
+    )
+
     proposal = TradeProposal(
         proposal_id="proposal-003",
         symbol="SPY",
         strategy="defined_risk_option",
         contracts=1,
+        legs=(buy_leg, sell_leg),
     )
 
     authority = LockeanAuthority()
@@ -85,3 +104,28 @@ def test_authority_decision_is_immutable_after_rejection():
 
     with pytest.raises(AttributeError):
         decision.status = "AUTHORIZED"
+
+
+def test_authority_rejects_defined_risk_proposal_without_exactly_two_legs():
+    single_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("500"),
+        expiration=date(2026, 9, 18),
+        side="buy",
+    )
+
+    proposal = TradeProposal(
+        proposal_id="proposal-008",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=1,
+        legs=(single_leg,),
+    )
+
+    authority = LockeanAuthority()
+
+    decision = authority.evaluate(proposal)
+
+    assert decision.status == "REJECTED"
+    assert decision.reason == "invalid_leg_count"
+    assert decision.proposal_id == "proposal-008"

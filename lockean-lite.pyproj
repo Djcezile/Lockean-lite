@@ -26,6 +26,7 @@
     <Content Include=".gitignore" />
     <Content Include="docs\build_log\2026-08-29_lite-day-1-handoff.md" />
     <Content Include="docs\build_log\2026-08-29_lite-day-1.md" />
+    <Content Include="docs\build_log\2026-08-29_lite-day-2.md" />
     <Content Include="docs\decisions\2026-08-29_authorization-boundary.md" />
     <Content Include="lockean-lite.slnx" />
     <Content Include="pyproject.toml" />
@@ -42,9 +43,11 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="src\lockean_lite\lockean_authority.py" />
+    <Compile Include="src\lockean_lite\option_leg.py" />
     <Compile Include="src\lockean_lite\trade_proposal.py" />
     <Compile Include="src\lockean_lite\__init__.py" />
     <Compile Include="tests\test_lockean_authority.py" />
+    <Compile Include="tests\test_option_leg.py" />
     <Compile Include="tests\test_trade_proposal.py" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
