@@ -29,6 +29,7 @@ def build_recommendation_prompt(
         OptionQuoteSnapshot,
         ...,
     ],
+    maximum_allowed_loss: Decimal | None = None,
 ) -> str:
     candidate_lines = []
 
@@ -46,30 +47,47 @@ def build_recommendation_prompt(
         candidate_lines
     )
 
-    return (
-        "Recommend one defined-risk SPY bull call spread "
-        "using only the candidate options below.\n\n"
-        "Return JSON only with exactly these fields:\n"
-        "symbol\n"
-        "expiration\n"
-        "buy_strike\n"
-        "sell_strike\n"
-        "contracts\n\n"
-        "Do not return pricing, risk calculations, "
-        "authorization decisions, or broker instructions.\n\n"
-        f"proposal_reference={proposal_id}\n\n"
-        "CANDIDATES:\n"
-        f"{candidate_text}"
+    policy_context = ""
+
+    if maximum_allowed_loss is not None:
+        policy_context = (
+        "\nLOCKEAN POLICY CONTEXT:\n"
+        f"maximum_allowed_loss_usd="
+        f"{maximum_allowed_loss}\n"
+        "Use this only to improve your recommendation. "
+        "Lockean independently determines pricing, risk, "
+        "compliance, and authorization.\n"
     )
+
+    return (
+    "Recommend one defined-risk SPY bull call spread "
+    "using only the candidate options below.\n\n"
+    "Return JSON only with exactly these fields:\n"
+    "symbol\n"
+    "expiration\n"
+    "buy_strike\n"
+    "sell_strike\n"
+    "contracts\n\n"
+    "Do not return pricing, risk calculations, "
+    "authorization decisions, or broker instructions.\n"
+    f"{policy_context}\n"
+    f"proposal_reference={proposal_id}\n\n"
+    "CANDIDATES:\n"
+    f"{candidate_text}"
+)
 
 
 class StructuredAIRecommendationProvider:
     def __init__(
-        self,
-        *,
-        proposal_id_provider,
-        model_callable,
-    ):
+    self,
+    *,
+    proposal_id_provider,
+    model_callable,
+    maximum_allowed_loss: Decimal | None = None,
+):
+        self.maximum_allowed_loss = (
+            maximum_allowed_loss
+        )
         self.proposal_id_provider = (
             proposal_id_provider
         )
@@ -90,6 +108,9 @@ class StructuredAIRecommendationProvider:
         prompt = build_recommendation_prompt(
             proposal_id=proposal_id,
             candidate_quotes=candidate_quotes,
+            maximum_allowed_loss=(
+                self.maximum_allowed_loss
+            ),
         )
 
         raw_response = self.model_callable(

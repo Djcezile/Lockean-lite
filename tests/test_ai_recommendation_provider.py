@@ -203,3 +203,67 @@ def test_ai_provider_rejects_missing_required_fields():
         provider(
             _candidates()
         )
+
+def test_ai_prompt_receives_maximum_loss_policy_as_context_only():
+    prompt = build_recommendation_prompt(
+        proposal_id="proposal-ai-policy-001",
+        candidate_quotes=_candidates(),
+        maximum_allowed_loss=Decimal("150.00"),
+    )
+
+    assert (
+        "maximum_allowed_loss_usd=150.00"
+        in prompt
+    )
+
+    # Policy knowledge does not expand AI output authority.
+    assert "net_debit" not in prompt
+    assert "authorization_receipt" not in prompt
+
+
+def test_structured_ai_provider_passes_policy_context_to_model():
+    captured = {}
+
+    raw_response = """
+    {
+      "symbol": "SPY",
+      "expiration": "2026-09-18",
+      "buy_strike": "782",
+      "sell_strike": "787",
+      "contracts": 1
+    }
+    """
+
+    def fake_model(prompt):
+        captured["prompt"] = prompt
+        return raw_response
+
+    provider = StructuredAIRecommendationProvider(
+        proposal_id_provider=lambda: (
+            "proposal-ai-policy-002"
+        ),
+        model_callable=fake_model,
+        maximum_allowed_loss=Decimal("150.00"),
+    )
+
+    recommendation = provider(
+        _candidates()
+    )
+
+    assert (
+        "maximum_allowed_loss_usd=150.00"
+        in captured["prompt"]
+    )
+
+    assert recommendation.buy_strike == Decimal(
+        "782"
+    )
+
+    assert recommendation.sell_strike == Decimal(
+        "787"
+    )
+
+    assert not hasattr(
+        recommendation,
+        "maximum_loss",
+    )
