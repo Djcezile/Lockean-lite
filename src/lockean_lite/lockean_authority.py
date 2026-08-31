@@ -147,6 +147,29 @@ class LockeanAuthority:
                     proposal_id=proposal.proposal_id,
                 )
 
+            if (
+                account_snapshot is not None
+                and account_snapshot.options_trading_level < 3
+            ):
+                return AuthorityDecision(
+                    status="REJECTED",
+                    reason="options_level_insufficient",
+                    proposal_id=proposal.proposal_id,
+                )
+
+            if account_snapshot is not None:
+                maximum_loss = calculate_bull_call_spread_maximum_loss(
+                    net_debit=proposal.net_debit,
+                    contracts=proposal.contracts,
+                )
+
+                if maximum_loss > account_snapshot.options_buying_power:
+                    return AuthorityDecision(
+                    status="REJECTED",
+                    reason="insufficient_options_buying_power",
+                    proposal_id=proposal.proposal_id,
+                )
+
         return AuthorityDecision(
             status="REJECTED",
             reason="authorization_requirements_incomplete",

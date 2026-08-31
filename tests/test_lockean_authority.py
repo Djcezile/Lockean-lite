@@ -488,3 +488,95 @@ def test_authority_rejects_proposal_when_account_trading_is_blocked():
     assert decision.status == "REJECTED"
     assert decision.reason == "account_trading_blocked"
     assert decision.proposal_id == "proposal-021"
+
+def test_authority_rejects_proposal_when_options_trading_level_is_insufficient():
+    buy_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("500"),
+        expiration=date(2026, 9, 18),
+        side="buy",
+    )
+
+    sell_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("505"),
+        expiration=date(2026, 9, 18),
+        side="sell",
+    )
+
+    proposal = TradeProposal(
+        proposal_id="proposal-022",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=1,
+        legs=(buy_leg, sell_leg),
+        net_debit=Decimal("1.00"),
+    )
+
+    account_snapshot = PaperAccountSnapshot(
+        status="ACTIVE",
+        currency="USD",
+        trading_blocked=False,
+        options_buying_power=Decimal("1000.00"),
+        options_approved_level=3,
+        options_trading_level=2,
+    )
+
+    authority = LockeanAuthority(
+        maximum_allowed_loss=Decimal("150.00"),
+    )
+
+    decision = authority.evaluate(
+        proposal,
+        account_snapshot=account_snapshot,
+    )
+
+    assert decision.status == "REJECTED"
+    assert decision.reason == "options_level_insufficient"
+    assert decision.proposal_id == "proposal-022"
+
+def test_authority_rejects_proposal_when_options_buying_power_is_insufficient():
+    buy_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("500"),
+        expiration=date(2026, 9, 18),
+        side="buy",
+    )
+
+    sell_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("505"),
+        expiration=date(2026, 9, 18),
+        side="sell",
+    )
+
+    proposal = TradeProposal(
+        proposal_id="proposal-023",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=1,
+        legs=(buy_leg, sell_leg),
+        net_debit=Decimal("1.00"),
+    )
+
+    account_snapshot = PaperAccountSnapshot(
+        status="ACTIVE",
+        currency="USD",
+        trading_blocked=False,
+        options_buying_power=Decimal("75.00"),
+        options_approved_level=3,
+        options_trading_level=3,
+    )
+
+    authority = LockeanAuthority(
+        maximum_allowed_loss=Decimal("150.00"),
+    )
+
+    decision = authority.evaluate(
+        proposal,
+        account_snapshot=account_snapshot,
+    )
+
+    assert decision.status == "REJECTED"
+    assert decision.reason == "insufficient_options_buying_power"
+    assert decision.proposal_id == "proposal-023"
