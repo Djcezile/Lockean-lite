@@ -15,6 +15,9 @@ from lockean_lite.alpaca_execution_adapter import (
     resolve_option_contract_symbols,
 )
 
+from datetime import datetime, timezone
+from typing import Callable
+
 @dataclass(frozen=True)
 class ExecutionAuthorityDecision:
     allowed: bool
@@ -103,3 +106,37 @@ def execute_authorized_paper_order(
         reason="paper_order_submitted",
         broker_order=broker_order,
     )
+
+class PaperExecutionGateway:
+    def __init__(
+        self,
+        *,
+        client,
+        signing_key: bytes,
+        now_provider: Callable[[], datetime] | None = None,
+    ):
+        self.client = client
+        self.signing_key = signing_key
+        self.now_provider = (
+            now_provider
+            if now_provider is not None
+            else lambda: datetime.now(timezone.utc)
+        )
+
+    def execute(
+        self,
+        proposal: TradeProposal,
+        receipt: AuthorizationReceipt,
+    ) -> str:
+        result = execute_authorized_paper_order(
+            client=self.client,
+            proposal=proposal,
+            receipt=receipt,
+            signing_key=self.signing_key,
+            now=self.now_provider(),
+        )
+
+        if result.submitted:
+            return "submitted"
+
+        return result.reason

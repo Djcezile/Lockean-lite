@@ -69,7 +69,7 @@ def run_trade_decision_cycle(
     if execution_result != "submitted":
         return TradeDecisionCycleResult(
             status="REJECTED",
-            reason="execution_failed",
+            reason=execution_result,
         )
 
     return TradeDecisionCycleResult(

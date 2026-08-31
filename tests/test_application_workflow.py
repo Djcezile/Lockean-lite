@@ -221,3 +221,55 @@ def test_cycle_reaches_execution_only_after_authority_receipt_exists():
 
     assert len(authority.calls) == 1
     assert len(gateway.calls) == 1
+
+def test_cycle_preserves_exact_execution_gateway_failure_reason():
+    receipt = AuthorizationReceipt(
+        receipt_id="receipt-cycle-002",
+        proposal_fingerprint="fingerprint",
+        issued_at=AS_OF,
+        expires_at=AS_OF,
+        authority_signature="signature",
+    )
+
+    authority = FakeAuthority(
+        decision=AuthorityDecision(
+            status="AUTHORIZED",
+            reason="authorization_granted",
+            proposal_id="proposal-cycle-001",
+            authorization_receipt=receipt,
+        )
+    )
+
+    class RejectingGateway:
+        def execute(
+            self,
+            proposal,
+            receipt,
+        ):
+            return "receipt_expired"
+
+    validated = ValidatedMarketEvidence(
+        proposal_fingerprint="fingerprint",
+        spy_evidence_id="spy",
+        vix_evidence_id="vix",
+        as_of=AS_OF,
+        spy_source="alpaca",
+        vix_source="cboe",
+    )
+
+    result = run_trade_decision_cycle(
+        proposal=_proposal(),
+        account_snapshot=_account(),
+        evidence_validation_result=(
+            EvidenceValidationResult(
+                accepted=True,
+                reason="evidence_validated",
+                validated_evidence=validated,
+            )
+        ),
+        authority=authority,
+        execution_gateway=RejectingGateway(),
+    )
+
+    assert result.status == "REJECTED"
+    assert result.reason == "receipt_expired"

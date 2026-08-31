@@ -25,6 +25,13 @@ from lockean_lite.execution_gateway import (
     validate_execution_authority,
 )
 
+from lockean_lite.execution_gateway import (
+    ExecutionSubmissionResult,
+    PaperExecutionGateway,
+    execute_authorized_paper_order,
+    validate_execution_authority,
+)
+
 class FakeExecutionClient:
     def __init__(self):
         self.contract_requests = []
@@ -262,3 +269,95 @@ def test_execution_gateway_allows_exact_authorized_proposal():
 
     assert decision.allowed is True
     assert decision.reason == "execution_authority_valid"
+
+def test_paper_execution_gateway_uses_receipt_gated_submission(
+    monkeypatch,
+):
+    proposal = _proposal()
+    receipt = _receipt_for(proposal)
+
+    client = object()
+
+    expected_now = NOW + timedelta(seconds=5)
+
+    calls = []
+
+    def fake_execute_authorized_paper_order(
+        *,
+        client,
+        proposal,
+        receipt,
+        signing_key,
+        now,
+    ):
+        calls.append(
+            (
+                client,
+                proposal,
+                receipt,
+                signing_key,
+                now,
+            )
+        )
+
+        return ExecutionSubmissionResult(
+            submitted=True,
+            reason="paper_order_submitted",
+            broker_order=object(),
+        )
+
+    monkeypatch.setattr(
+        "lockean_lite.execution_gateway.execute_authorized_paper_order",
+        fake_execute_authorized_paper_order,
+    )
+
+    gateway = PaperExecutionGateway(
+        client=client,
+        signing_key=TEST_SIGNING_KEY,
+        now_provider=lambda: expected_now,
+    )
+
+    result = gateway.execute(
+        proposal,
+        receipt,
+    )
+
+    assert result == "submitted"
+
+    assert calls == [
+        (
+            client,
+            proposal,
+            receipt,
+            TEST_SIGNING_KEY,
+            expected_now,
+        )
+    ]
+
+
+def test_paper_execution_gateway_preserves_exact_rejection_reason(
+    monkeypatch,
+):
+    proposal = _proposal()
+    receipt = _receipt_for(proposal)
+
+    monkeypatch.setattr(
+        "lockean_lite.execution_gateway.execute_authorized_paper_order",
+        lambda **kwargs: ExecutionSubmissionResult(
+            submitted=False,
+            reason="receipt_expired",
+        ),
+    )
+
+    gateway = PaperExecutionGateway(
+        client=object(),
+        signing_key=TEST_SIGNING_KEY,
+        now_provider=lambda: NOW,
+    )
+
+    result = gateway.execute(
+        proposal,
+        receipt,
+    )
+
+    assert result == "receipt_expired"
