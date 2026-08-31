@@ -57,8 +57,10 @@
     <Compile Include="src\lockean_lite\market_entry_policy.py" />
     <Compile Include="src\lockean_lite\market_evidence.py" />
     <Compile Include="src\lockean_lite\option_leg.py" />
+    <Compile Include="src\lockean_lite\option_quote_snapshot.py" />
     <Compile Include="src\lockean_lite\paper_account_snapshot.py" />
     <Compile Include="src\lockean_lite\proposal_fingerprint.py" />
+    <Compile Include="src\lockean_lite\proposal_pricing.py" />
     <Compile Include="src\lockean_lite\risk_calculation.py" />
     <Compile Include="src\lockean_lite\trade_proposal.py" />
     <Compile Include="src\lockean_lite\__init__.py" />
@@ -75,8 +77,10 @@
     <Compile Include="tests\test_market_entry_policy.py" />
     <Compile Include="tests\test_market_evidence.py" />
     <Compile Include="tests\test_option_leg.py" />
+    <Compile Include="tests\test_option_quote_snapshot.py" />
     <Compile Include="tests\test_paper_account_snapshot.py" />
     <Compile Include="tests\test_proposal_fingerprint.py" />
+    <Compile Include="tests\test_proposal_pricing.py" />
     <Compile Include="tests\test_risk_calculation.py" />
     <Compile Include="tests\test_trade_proposal.py" />
   </ItemGroup>
