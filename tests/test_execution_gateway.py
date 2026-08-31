@@ -14,6 +14,54 @@ from lockean_lite.proposal_fingerprint import (
 )
 from lockean_lite.trade_proposal import TradeProposal
 
+from types import SimpleNamespace
+
+import pytest
+
+from alpaca.trading.enums import ContractType
+
+from lockean_lite.execution_gateway import (
+    execute_authorized_paper_order,
+    validate_execution_authority,
+)
+
+class FakeExecutionClient:
+    def __init__(self):
+        self.contract_requests = []
+        self.submitted_orders = []
+
+    def get_option_contracts(self, request):
+        self.contract_requests.append(request)
+
+        strike = Decimal(
+            str(request.strike_price_gte)
+        )
+
+        symbol = (
+            "SPY260918C00500000"
+            if strike == Decimal("500")
+            else "SPY260918C00505000"
+        )
+
+        contract = SimpleNamespace(
+            symbol=symbol,
+            underlying_symbol="SPY",
+            expiration_date=date(2026, 9, 18),
+            type=ContractType.CALL,
+            strike_price=float(strike),
+            tradable=True,
+        )
+
+        return SimpleNamespace(
+            option_contracts=[contract],
+        )
+
+    def submit_order(self, *, order_data):
+        self.submitted_orders.append(order_data)
+
+        return SimpleNamespace(
+            id="paper-order-001",
+        )
 
 TEST_SIGNING_KEY = b"test-only-execution-gateway-key"
 
@@ -25,6 +73,81 @@ NOW = datetime(
     45,
     tzinfo=timezone.utc,
 )
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "missing",
+        "forged",
+        "expired",
+        "tampered",
+    ],
+)
+
+def test_execution_gateway_never_calls_broker_for_invalid_authority(
+    scenario,
+):
+    original_proposal = _proposal(contracts=1)
+    proposal = original_proposal
+    receipt = _receipt_for(original_proposal)
+    now = NOW + timedelta(seconds=5)
+
+    if scenario == "missing":
+        receipt = None
+
+    elif scenario == "forged":
+        receipt = replace(
+            receipt,
+            authority_signature="forged",
+        )
+
+    elif scenario == "expired":
+        now = NOW + timedelta(seconds=30)
+
+    elif scenario == "tampered":
+        proposal = _proposal(contracts=2)
+
+    client = FakeExecutionClient()
+
+    result = execute_authorized_paper_order(
+        client=client,
+        proposal=proposal,
+        receipt=receipt,
+        signing_key=TEST_SIGNING_KEY,
+        now=now,
+    )
+
+    assert result.submitted is False
+
+    assert client.contract_requests == []
+    assert client.submitted_orders == []
+
+def test_execution_gateway_submits_exactly_once_for_valid_authority():
+    proposal = _proposal(contracts=1)
+    receipt = _receipt_for(proposal)
+
+    client = FakeExecutionClient()
+
+    result = execute_authorized_paper_order(
+        client=client,
+        proposal=proposal,
+        receipt=receipt,
+        signing_key=TEST_SIGNING_KEY,
+        now=NOW + timedelta(seconds=5),
+    )
+
+    assert result.submitted is True
+    assert result.reason == "paper_order_submitted"
+
+    assert len(client.contract_requests) == 2
+    assert len(client.submitted_orders) == 1
+
+    submitted_order = client.submitted_orders[0]
+
+    assert submitted_order.qty == 1
+    assert submitted_order.limit_price == 1.0
+
+    assert result.broker_order.id == "paper-order-001"
 
 
 def _proposal(contracts=1):

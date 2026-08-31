@@ -10,11 +10,21 @@ from lockean_lite.proposal_fingerprint import (
 )
 from lockean_lite.trade_proposal import TradeProposal
 
+from lockean_lite.alpaca_execution_adapter import (
+    build_authorized_mleg_limit_order,
+    resolve_option_contract_symbols,
+)
 
 @dataclass(frozen=True)
 class ExecutionAuthorityDecision:
     allowed: bool
     reason: str
+
+@dataclass(frozen=True)
+class ExecutionSubmissionResult:
+    submitted: bool
+    reason: str
+    broker_order: object | None = None
 
 
 def validate_execution_authority(
@@ -50,4 +60,46 @@ def validate_execution_authority(
     return ExecutionAuthorityDecision(
         allowed=True,
         reason="execution_authority_valid",
+    )
+
+
+def execute_authorized_paper_order(
+    *,
+    client,
+    proposal: TradeProposal,
+    receipt: AuthorizationReceipt | None,
+    signing_key: bytes,
+    now: datetime,
+) -> ExecutionSubmissionResult:
+    authority_decision = validate_execution_authority(
+        proposal=proposal,
+        receipt=receipt,
+        signing_key=signing_key,
+        now=now,
+    )
+
+    if not authority_decision.allowed:
+        return ExecutionSubmissionResult(
+            submitted=False,
+            reason=authority_decision.reason,
+        )
+
+    contract_symbols = resolve_option_contract_symbols(
+        client=client,
+        proposal=proposal,
+    )
+
+    order_request = build_authorized_mleg_limit_order(
+        proposal=proposal,
+        contract_symbols=contract_symbols,
+    )
+
+    broker_order = client.submit_order(
+        order_data=order_request,
+    )
+
+    return ExecutionSubmissionResult(
+        submitted=True,
+        reason="paper_order_submitted",
+        broker_order=broker_order,
     )
