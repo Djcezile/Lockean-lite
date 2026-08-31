@@ -10,6 +10,14 @@ from lockean_lite.risk_calculation import (
 from lockean_lite.trade_proposal import TradeProposal
 from lockean_lite.paper_account_snapshot import PaperAccountSnapshot
 
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
+from lockean_lite.authorization_receipt import (
+    AuthorizationReceipt,
+    issue_authorization_receipt,
+)
+
 
 SUPPORTED_STRATEGIES = frozenset(
     {
@@ -23,16 +31,21 @@ class AuthorityDecision:
     status: str
     reason: str
     proposal_id: str
+    authorization_receipt: AuthorizationReceipt | None = None
 
 
 class LockeanAuthority:
-    def __init__(
-        self,
-        maximum_allowed_loss: Decimal | None = None,
-    ):
-        self.maximum_allowed_loss = maximum_allowed_loss
+   def __init__(
+       self,
+       maximum_allowed_loss: Decimal | None = None,
+       authorization_signing_key: bytes | None = None,
+   ):
+       self.maximum_allowed_loss = maximum_allowed_loss
+       self.authorization_signing_key = (
+           authorization_signing_key
+       )
 
-    def evaluate(
+   def evaluate(
         self,
         proposal: TradeProposal,
         account_snapshot: PaperAccountSnapshot | None = None,
@@ -115,89 +128,116 @@ class LockeanAuthority:
             proposal_id=proposal.proposal_id,
         )
 
+        maximum_loss = calculate_bull_call_spread_maximum_loss(
+            net_debit=proposal.net_debit,
+            contracts=proposal.contracts,
+        )
+
         if (
-            proposal.net_debit is not None
-            and self.maximum_allowed_loss is not None
+            self.maximum_allowed_loss is not None
+            and maximum_loss > self.maximum_allowed_loss
         ):
-            maximum_loss = calculate_bull_call_spread_maximum_loss(
-                net_debit=proposal.net_debit,
-                contracts=proposal.contracts,
+            return AuthorityDecision(
+                status="REJECTED",
+                reason="max_loss_exceeds_limit",
+                proposal_id=proposal.proposal_id,
             )
 
-            if maximum_loss > self.maximum_allowed_loss:
+        if (
+            account_snapshot is not None
+            and account_snapshot.status != "ACTIVE"
+        ):
+            return AuthorityDecision(
+                status="REJECTED",
+                reason="account_not_active",
+                proposal_id=proposal.proposal_id,
+            )
+
+        if (
+            account_snapshot is not None
+            and account_snapshot.trading_blocked
+        ):
+            return AuthorityDecision(
+                status="REJECTED",
+                reason="account_trading_blocked",
+                proposal_id=proposal.proposal_id,
+            )
+
+        if (
+            account_snapshot is not None
+            and account_snapshot.options_trading_level < 3
+        ):
+            return AuthorityDecision(
+                status="REJECTED",
+                reason="options_level_insufficient",
+                proposal_id=proposal.proposal_id,
+            )
+
+        if (
+            account_snapshot is not None
+            and maximum_loss > account_snapshot.options_buying_power
+        ):
+            return AuthorityDecision(
+                status="REJECTED",
+                reason="insufficient_options_buying_power",
+                proposal_id=proposal.proposal_id,
+            )
+
+        if account_snapshot is not None:
+            if validated_evidence is None:
                 return AuthorityDecision(
                     status="REJECTED",
-                    reason="max_loss_exceeds_limit",
+                    reason="validated_evidence_required",
                     proposal_id=proposal.proposal_id,
                 )
 
+            proposal_fingerprint = fingerprint_trade_proposal(
+                proposal
+            )
+
             if (
-                account_snapshot is not None
-                and account_snapshot.status != "ACTIVE"
+                validated_evidence.proposal_fingerprint
+                != proposal_fingerprint
             ):
                 return AuthorityDecision(
                     status="REJECTED",
-                    reason="account_not_active",
+                    reason="validated_evidence_proposal_mismatch",
                     proposal_id=proposal.proposal_id,
                 )
 
-            if (
-                account_snapshot is not None
-                and account_snapshot.trading_blocked
-            ):
-                return AuthorityDecision(
-                    status="REJECTED",
-                    reason="account_trading_blocked",
-                    proposal_id=proposal.proposal_id,
-                )
+        if (
+            self.maximum_allowed_loss is None
+            or account_snapshot is None
+            or validated_evidence is None
+            or self.authorization_signing_key is None
+        ):
+            return AuthorityDecision(
+                status="REJECTED",
+                reason="authorization_requirements_incomplete",
+                proposal_id=proposal.proposal_id,
+            )
 
-            if (
-                account_snapshot is not None
-                and account_snapshot.options_trading_level < 3
-            ):
-                return AuthorityDecision(
-                    status="REJECTED",
-                    reason="options_level_insufficient",
-                    proposal_id=proposal.proposal_id,
-                )
+        proposal_fingerprint = fingerprint_trade_proposal(
+            proposal
+        )
 
-            if account_snapshot is not None:
-                maximum_loss = calculate_bull_call_spread_maximum_loss(
-                    net_debit=proposal.net_debit,
-                    contracts=proposal.contracts,
-                )
+        issued_at = datetime.now(timezone.utc)
+        expires_at = issued_at + timedelta(seconds=30)
 
-                if maximum_loss > account_snapshot.options_buying_power:
-                    return AuthorityDecision(
-                    status="REJECTED",
-                    reason="insufficient_options_buying_power",
-                    proposal_id=proposal.proposal_id,
-                )
-
-            if account_snapshot is not None:
-                if validated_evidence is None:
-                    return AuthorityDecision(
-                        status="REJECTED",
-                        reason="validated_evidence_required",
-                        proposal_id=proposal.proposal_id,
-                    )
-
-                proposal_fingerprint = fingerprint_trade_proposal(
-                    proposal
-                )
-
-                if (
-                    validated_evidence.proposal_fingerprint
-                    != proposal_fingerprint
-                ):
-                    return AuthorityDecision(
-                        status="REJECTED",
-                        reason="validated_evidence_proposal_mismatch",
-                        proposal_id=proposal.proposal_id,
-                    )
+        receipt = issue_authorization_receipt(
+            receipt_id=str(uuid4()),
+            proposal_fingerprint=proposal_fingerprint,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            signing_key=self.authorization_signing_key,
+        )
 
         return AuthorityDecision(
-            status="REJECTED",
-            reason="authorization_requirements_incomplete",
+            status="AUTHORIZED",
+            reason="authorization_granted",
             proposal_id=proposal.proposal_id,
+            authorization_receipt=receipt,
         )
+
+
+

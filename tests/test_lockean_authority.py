@@ -11,6 +11,88 @@ from lockean_lite.proposal_fingerprint import fingerprint_trade_proposal
 from lockean_lite.option_leg import OptionLeg
 from lockean_lite.paper_account_snapshot import PaperAccountSnapshot
 
+from lockean_lite.authorization_receipt import (
+    verify_authorization_receipt,
+)
+
+TEST_AUTHORIZATION_SIGNING_KEY = (
+    b"test-only-lockean-authorization-key"
+)
+
+def test_authority_authorizes_fully_compliant_proposal_and_issues_valid_receipt():
+    buy_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("500"),
+        expiration=date(2026, 9, 18),
+        side="buy",
+    )
+
+    sell_leg = OptionLeg(
+        option_type="call",
+        strike=Decimal("505"),
+        expiration=date(2026, 9, 18),
+        side="sell",
+    )
+
+    proposal = TradeProposal(
+        proposal_id="proposal-028",
+        symbol="SPY",
+        strategy="defined_risk_option",
+        contracts=1,
+        legs=(buy_leg, sell_leg),
+        net_debit=Decimal("1.00"),
+    )
+
+    account_snapshot = PaperAccountSnapshot(
+        status="ACTIVE",
+        currency="USD",
+        trading_blocked=False,
+        options_buying_power=Decimal("1000.00"),
+        options_approved_level=3,
+        options_trading_level=3,
+    )
+
+    validated_evidence = _validated_evidence_for(
+        proposal
+    )
+
+    authority = LockeanAuthority(
+        maximum_allowed_loss=Decimal("150.00"),
+        authorization_signing_key=(
+            TEST_AUTHORIZATION_SIGNING_KEY
+        ),
+    )
+
+    decision = authority.evaluate(
+        proposal,
+        account_snapshot=account_snapshot,
+        validated_evidence=validated_evidence,
+    )
+
+    assert decision.status == "AUTHORIZED"
+    assert decision.reason == "authorization_granted"
+    assert decision.proposal_id == "proposal-028"
+    assert decision.authorization_receipt is not None
+
+    receipt = decision.authorization_receipt
+
+    assert (
+        receipt.proposal_fingerprint
+        == fingerprint_trade_proposal(proposal)
+    )
+
+    verification = verify_authorization_receipt(
+        receipt=receipt,
+        signing_key=TEST_AUTHORIZATION_SIGNING_KEY,
+        expected_proposal_fingerprint=(
+            fingerprint_trade_proposal(proposal)
+        ),
+        now=receipt.issued_at,
+    )
+
+    assert verification.valid is True
+    assert verification.reason == "receipt_valid"
+
 
 def _validated_evidence_for(proposal):
     return ValidatedMarketEvidence(
