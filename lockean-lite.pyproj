@@ -28,6 +28,7 @@
     <Content Include="docs\build_log\2026-08-29_lite-day-1.md" />
     <Content Include="docs\build_log\2026-08-29_lite-day-2-handoff.md" />
     <Content Include="docs\build_log\2026-08-29_lite-day-2.md" />
+    <Content Include="docs\build_log\2026-08-30_lite-day-3.md" />
     <Content Include="docs\decisions\2026-08-29_authorization-boundary.md" />
     <Content Include="lockean-lite.slnx" />
     <Content Include="pyproject.toml" />
@@ -43,12 +44,14 @@
     <Folder Include="tests\" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="src\lockean_lite\alpaca_client_factory.py" />
     <Compile Include="src\lockean_lite\lockean_authority.py" />
     <Compile Include="src\lockean_lite\option_leg.py" />
     <Compile Include="src\lockean_lite\proposal_fingerprint.py" />
     <Compile Include="src\lockean_lite\risk_calculation.py" />
     <Compile Include="src\lockean_lite\trade_proposal.py" />
     <Compile Include="src\lockean_lite\__init__.py" />
+    <Compile Include="tests\test_alpaca_client_factory.py" />
     <Compile Include="tests\test_lockean_authority.py" />
     <Compile Include="tests\test_option_leg.py" />
     <Compile Include="tests\test_proposal_fingerprint.py" />
