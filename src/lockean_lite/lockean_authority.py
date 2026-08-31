@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from decimal import Decimal
 
+from lockean_lite.evidence_validation import ValidatedMarketEvidence
+from lockean_lite.proposal_fingerprint import fingerprint_trade_proposal
+
 from lockean_lite.risk_calculation import (
     calculate_bull_call_spread_maximum_loss,
 )
@@ -33,6 +36,7 @@ class LockeanAuthority:
         self,
         proposal: TradeProposal,
         account_snapshot: PaperAccountSnapshot | None = None,
+        validated_evidence: ValidatedMarketEvidence | None = None,
     ) -> AuthorityDecision:
         if proposal.strategy not in SUPPORTED_STRATEGIES:
             return AuthorityDecision(
@@ -169,6 +173,28 @@ class LockeanAuthority:
                     reason="insufficient_options_buying_power",
                     proposal_id=proposal.proposal_id,
                 )
+
+            if account_snapshot is not None:
+                if validated_evidence is None:
+                    return AuthorityDecision(
+                        status="REJECTED",
+                        reason="validated_evidence_required",
+                        proposal_id=proposal.proposal_id,
+                    )
+
+                proposal_fingerprint = fingerprint_trade_proposal(
+                    proposal
+                )
+
+                if (
+                    validated_evidence.proposal_fingerprint
+                    != proposal_fingerprint
+                ):
+                    return AuthorityDecision(
+                        status="REJECTED",
+                        reason="validated_evidence_proposal_mismatch",
+                        proposal_id=proposal.proposal_id,
+                    )
 
         return AuthorityDecision(
             status="REJECTED",
