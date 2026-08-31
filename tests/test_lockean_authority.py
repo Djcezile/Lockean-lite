@@ -107,7 +107,8 @@ def _validated_evidence_for(proposal):
             0,
             tzinfo=timezone.utc,
         ),
-        source="alpaca",
+        spy_source="alpaca",
+        vix_source="cboe",
     )
 
 

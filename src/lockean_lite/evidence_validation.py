@@ -11,7 +11,8 @@ from lockean_lite.proposal_fingerprint import (
 from lockean_lite.trade_proposal import TradeProposal
 
 
-SUPPORTED_EVIDENCE_SOURCE = "alpaca"
+SUPPORTED_SPY_EVIDENCE_SOURCE = "alpaca"
+SUPPORTED_VIX_EVIDENCE_SOURCE = "cboe"
 SUPPORTED_VOLATILITY_SYMBOL = "VIX"
 
 
@@ -21,7 +22,8 @@ class ValidatedMarketEvidence:
     spy_evidence_id: str
     vix_evidence_id: str
     as_of: datetime
-    source: str
+    spy_source: str
+    vix_source: str
 
 
 @dataclass(frozen=True)
@@ -49,8 +51,10 @@ def validate_market_evidence_for_proposal(
         )
 
     if (
-        spy_evidence.source != SUPPORTED_EVIDENCE_SOURCE
-        or vix_evidence.source != SUPPORTED_EVIDENCE_SOURCE
+        spy_evidence.source
+        != SUPPORTED_SPY_EVIDENCE_SOURCE
+        or vix_evidence.source
+        != SUPPORTED_VIX_EVIDENCE_SOURCE
     ):
         return EvidenceValidationResult(
             accepted=False,
@@ -90,7 +94,8 @@ def validate_market_evidence_for_proposal(
         spy_evidence_id=spy_evidence.evidence_id,
         vix_evidence_id=vix_evidence.evidence_id,
         as_of=spy_evidence.as_of,
-        source=SUPPORTED_EVIDENCE_SOURCE,
+        spy_source=SUPPORTED_SPY_EVIDENCE_SOURCE,
+        vix_source=SUPPORTED_VIX_EVIDENCE_SOURCE,
     )
 
     return EvidenceValidationResult(

@@ -53,10 +53,17 @@ def _evidence(
     evidence_id,
     symbol,
     *,
-    source="alpaca",
+    source=None,
     as_of=BASE_AS_OF,
     bar_timestamp=None,
 ):
+    if source is None:
+        source = (
+            "cboe"
+            if symbol == "VIX"
+            else "alpaca"
+        )
+
     if bar_timestamp is None:
         bar_timestamp = as_of
 
@@ -199,9 +206,10 @@ def test_validated_evidence_is_bound_to_exact_proposal_fingerprint(monkeypatch):
     assert result.reason == "evidence_validated"
 
     assert result.validated_evidence == ValidatedMarketEvidence(
-        proposal_fingerprint=fingerprint_trade_proposal(proposal),
-        spy_evidence_id="spy-001",
-        vix_evidence_id="vix-001",
-        as_of=BASE_AS_OF,
-        source="alpaca",
-    )
+    proposal_fingerprint=fingerprint_trade_proposal(proposal),
+    spy_evidence_id="spy-001",
+    vix_evidence_id="vix-001",
+    as_of=BASE_AS_OF,
+    spy_source="alpaca",
+    vix_source="cboe",
+)
