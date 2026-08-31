@@ -5,6 +5,7 @@ from lockean_lite.risk_calculation import (
     calculate_bull_call_spread_maximum_loss,
 )
 from lockean_lite.trade_proposal import TradeProposal
+from lockean_lite.paper_account_snapshot import PaperAccountSnapshot
 
 
 SUPPORTED_STRATEGIES = frozenset(
@@ -28,7 +29,11 @@ class LockeanAuthority:
     ):
         self.maximum_allowed_loss = maximum_allowed_loss
 
-    def evaluate(self, proposal: TradeProposal) -> AuthorityDecision:
+    def evaluate(
+        self,
+        proposal: TradeProposal,
+        account_snapshot: PaperAccountSnapshot | None = None,
+    ) -> AuthorityDecision:
         if proposal.strategy not in SUPPORTED_STRATEGIES:
             return AuthorityDecision(
                 status="REJECTED",
@@ -119,6 +124,26 @@ class LockeanAuthority:
                 return AuthorityDecision(
                     status="REJECTED",
                     reason="max_loss_exceeds_limit",
+                    proposal_id=proposal.proposal_id,
+                )
+
+            if (
+                account_snapshot is not None
+                and account_snapshot.status != "ACTIVE"
+            ):
+                return AuthorityDecision(
+                    status="REJECTED",
+                    reason="account_not_active",
+                    proposal_id=proposal.proposal_id,
+                )
+
+            if (
+                account_snapshot is not None
+                and account_snapshot.trading_blocked
+            ):
+                return AuthorityDecision(
+                    status="REJECTED",
+                    reason="account_trading_blocked",
                     proposal_id=proposal.proposal_id,
                 )
 
