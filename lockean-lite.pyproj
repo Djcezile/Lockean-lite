@@ -60,6 +60,7 @@
     <Compile Include="src\lockean_lite\evidence_ingestion.py" />
     <Compile Include="src\lockean_lite\evidence_validation.py" />
     <Compile Include="src\lockean_lite\execution_gateway.py" />
+    <Compile Include="src\lockean_lite\execution_proof_artifact.py" />
     <Compile Include="src\lockean_lite\lockean_authority.py" />
     <Compile Include="src\lockean_lite\market_entry_policy.py" />
     <Compile Include="src\lockean_lite\market_evidence.py" />
@@ -93,6 +94,7 @@
     <Compile Include="tests\test_evidence_validation.py" />
     <Compile Include="tests\test_execution_gateway.py" />
     <Compile Include="tests\test_execution_proof.py" />
+    <Compile Include="tests\test_execution_proof_artifact.py" />
     <Compile Include="tests\test_lockean_authority.py" />
     <Compile Include="tests\test_market_entry_policy.py" />
     <Compile Include="tests\test_market_evidence.py" />
