@@ -33,6 +33,8 @@
     <Content Include="docs\build_log\2026-08-31_lite-day-4.md" />
     <Content Include="docs\build_log\2026-09-01_lite-day-5.md" />
     <Content Include="docs\decisions\2026-08-29_authorization-boundary.md" />
+    <Content Include="docs\submissions\HACKATHON_SUBMISSION_DRAFT.md" />
+    <Content Include="docs\submissions\JUDGE_DEMO_NARRATIVE.md" />
     <Content Include="lockean-lite.slnx" />
     <Content Include="pyproject.toml" />
     <Content Include="README.md" />
@@ -42,6 +44,7 @@
     <Folder Include="docs\build_log\" />
     <Folder Include="docs\decisions\" />
     <Folder Include="docs\demo_evidence\" />
+    <Folder Include="docs\submissions\" />
     <Folder Include="src\" />
     <Folder Include="src\lockean_lite\" />
     <Folder Include="tests\" />
