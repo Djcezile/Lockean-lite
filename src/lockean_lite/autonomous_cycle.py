@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+from lockean_lite.execution_gateway import (
+    ExecutionProof,
+)
 
 from lockean_lite.application_workflow import (
     run_trade_decision_cycle,
@@ -18,6 +21,7 @@ from lockean_lite.trade_recommendation import (
 class AutonomousTradeCycleResult:
     status: str
     reason: str
+    execution_proof: ExecutionProof | None = None
 
 
 def run_autonomous_trade_cycle(
@@ -93,4 +97,7 @@ def run_autonomous_trade_cycle(
     return AutonomousTradeCycleResult(
         status=cycle_result.status,
         reason=cycle_result.reason,
+        execution_proof=(
+            cycle_result.execution_proof
+        ),
     )

@@ -303,7 +303,9 @@ def test_paper_execution_gateway_uses_receipt_gated_submission(
         return ExecutionSubmissionResult(
             submitted=True,
             reason="paper_order_submitted",
-            broker_order=object(),
+            broker_order=SimpleNamespace(
+                id="paper-order-001",
+            ),
         )
 
     monkeypatch.setattr(
@@ -322,7 +324,19 @@ def test_paper_execution_gateway_uses_receipt_gated_submission(
         receipt,
     )
 
-    assert result == "submitted"
+    assert result.submitted is True
+    assert result.reason == (
+        "paper_order_submitted"
+    )
+    assert result.execution_proof is not None
+    assert (
+        result.execution_proof.broker_order_id
+        == "paper-order-001"
+    )
+    assert (
+        result.execution_proof.authorization_receipt_id
+        == receipt.receipt_id
+    )
 
     assert calls == [
         (
@@ -360,4 +374,6 @@ def test_paper_execution_gateway_preserves_exact_rejection_reason(
         receipt,
     )
 
-    assert result == "receipt_expired"
+    assert result.submitted is False
+    assert result.reason == "receipt_expired"
+    assert result.execution_proof is None

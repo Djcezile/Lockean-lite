@@ -91,6 +91,7 @@
     <Compile Include="tests\test_evidence_ingestion.py" />
     <Compile Include="tests\test_evidence_validation.py" />
     <Compile Include="tests\test_execution_gateway.py" />
+    <Compile Include="tests\test_execution_proof.py" />
     <Compile Include="tests\test_lockean_authority.py" />
     <Compile Include="tests\test_market_entry_policy.py" />
     <Compile Include="tests\test_market_evidence.py" />

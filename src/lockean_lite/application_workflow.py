@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+from lockean_lite.execution_gateway import (
+    ExecutionProof,
+)
 
 from lockean_lite.evidence_validation import (
     EvidenceValidationResult,
@@ -13,6 +16,7 @@ from lockean_lite.trade_proposal import TradeProposal
 class TradeDecisionCycleResult:
     status: str
     reason: str
+    execution_proof: ExecutionProof | None = None
 
 
 def run_trade_decision_cycle(
@@ -66,13 +70,33 @@ def run_trade_decision_cycle(
         receipt,
     )
 
-    if execution_result != "submitted":
+    # Temporary compatibility for existing
+    # simple test doubles that return strings.
+    if isinstance(
+        execution_result,
+        str,
+    ):
+        if execution_result != "submitted":
+            return TradeDecisionCycleResult(
+                status="REJECTED",
+                reason=execution_result,
+            )
+
+        return TradeDecisionCycleResult(
+            status="SUBMITTED",
+            reason="paper_order_submitted",
+        )
+
+    if not execution_result.submitted:
         return TradeDecisionCycleResult(
             status="REJECTED",
-            reason=execution_result,
+            reason=execution_result.reason,
         )
 
     return TradeDecisionCycleResult(
         status="SUBMITTED",
-        reason="paper_order_submitted",
+        reason=execution_result.reason,
+        execution_proof=(
+            execution_result.execution_proof
+        ),
     )

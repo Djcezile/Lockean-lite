@@ -29,6 +29,20 @@ class ExecutionSubmissionResult:
     reason: str
     broker_order: object | None = None
 
+@dataclass(frozen=True)
+class ExecutionProof:
+    proposal_id: str
+    proposal_fingerprint: str
+    authorization_receipt_id: str
+    authorization_verification: str
+    broker_order_id: str
+
+
+@dataclass(frozen=True)
+class PaperExecutionGatewayResult:
+    submitted: bool
+    reason: str
+    execution_proof: ExecutionProof | None = None
 
 def validate_execution_authority(
     *,
@@ -127,7 +141,7 @@ class PaperExecutionGateway:
         self,
         proposal: TradeProposal,
         receipt: AuthorizationReceipt,
-    ) -> str:
+    ) -> PaperExecutionGatewayResult:
         result = execute_authorized_paper_order(
             client=self.client,
             proposal=proposal,
@@ -136,7 +150,49 @@ class PaperExecutionGateway:
             now=self.now_provider(),
         )
 
-        if result.submitted:
-            return "submitted"
+        if not result.submitted:
+            return PaperExecutionGatewayResult(
+                submitted=False,
+                reason=result.reason,
+            )
 
-        return result.reason
+        broker_order_id = getattr(
+            result.broker_order,
+            "id",
+            None,
+        )
+
+        if broker_order_id is None:
+            return PaperExecutionGatewayResult(
+                submitted=True,
+                reason=(
+                    "paper_order_submitted_"
+                    "proof_unavailable"
+                ),
+            )
+
+        proof = ExecutionProof(
+            proposal_id=(
+                proposal.proposal_id
+            ),
+            proposal_fingerprint=(
+                fingerprint_trade_proposal(
+                    proposal
+                )
+            ),
+            authorization_receipt_id=(
+                receipt.receipt_id
+            ),
+            authorization_verification=(
+                "execution_authority_valid"
+            ),
+            broker_order_id=str(
+                broker_order_id
+            ),
+        )
+
+        return PaperExecutionGatewayResult(
+            submitted=True,
+            reason="paper_order_submitted",
+            execution_proof=proof,
+        )
