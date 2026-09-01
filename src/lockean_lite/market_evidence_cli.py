@@ -1,5 +1,6 @@
 import argparse
 from datetime import date, datetime, timezone
+from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -12,6 +13,9 @@ from lockean_lite.alpaca_credentials import (
 )
 from lockean_lite.market_evidence_demo import (
     run_market_evidence_demo,
+)
+from lockean_lite.visual_market_evidence_demo import (
+    run_visual_market_evidence_demo,
 )
 
 
@@ -57,6 +61,7 @@ def fetch_official_vix_history() -> str:
 def run_market_evidence_cli(
     *,
     completed_through: date,
+    output_format: str = "text",
 ) -> str:
     credentials = (
         load_alpaca_credentials_from_environment()
@@ -71,11 +76,25 @@ def run_market_evidence_cli(
         credentials.secret_key,
     )
 
-    return run_market_evidence_demo(
-        stock_client=stock_client,
-        vix_csv_text=vix_csv_text,
-        completed_through=completed_through,
-        start=DEFAULT_HISTORY_START,
+    demo_arguments = {
+        "stock_client": stock_client,
+        "vix_csv_text": vix_csv_text,
+        "completed_through": completed_through,
+        "start": DEFAULT_HISTORY_START,
+    }
+
+    if output_format == "text":
+        return run_market_evidence_demo(
+            **demo_arguments
+        )
+
+    if output_format == "html":
+        return run_visual_market_evidence_demo(
+            **demo_arguments
+        )
+
+    raise ValueError(
+        "unsupported_demo_format"
     )
 
 
@@ -90,6 +109,20 @@ def _completed_date(
         raise argparse.ArgumentTypeError(
             "completed-through must use YYYY-MM-DD"
         ) from error
+
+
+def _print_fail_closed(
+    reason: str,
+) -> None:
+    print(
+        "LOCKEAN DEMO FAILED CLOSED"
+    )
+    print(
+        f"REASON: {reason}"
+    )
+    print(
+        "BROKER ORDER SUBMITTED: NO"
+    )
 
 
 def main(
@@ -109,6 +142,24 @@ def main(
         help="Completed market session, YYYY-MM-DD",
     )
 
+    parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=(
+            "text",
+            "html",
+        ),
+        default="text",
+        help="Report format.",
+    )
+
+    parser.add_argument(
+        "--output",
+        help=(
+            "Optional file path for rendered output."
+        ),
+    )
+
     args = parser.parse_args(
         argv
     )
@@ -118,18 +169,43 @@ def main(
             completed_through=(
                 args.completed_through
             ),
+            output_format=(
+                args.output_format
+            ),
         )
     except ValueError as error:
-        print(
-            "LOCKEAN DEMO FAILED CLOSED"
-        )
-        print(
-            f"REASON: {error}"
-        )
-        print(
-            "BROKER ORDER SUBMITTED: NO"
+        _print_fail_closed(
+            str(error)
         )
         return 1
+
+    if args.output:
+        output_path = Path(
+            args.output
+        )
+
+        try:
+            output_path.write_text(
+                output,
+                encoding="utf-8",
+            )
+        except OSError:
+            _print_fail_closed(
+                "demo_output_write_failed"
+            )
+            return 1
+
+        print(
+            "LOCKEAN DEMO OUTPUT WRITTEN"
+        )
+        print(
+            f"FORMAT: {args.output_format.upper()}"
+        )
+        print(
+            f"PATH: {output_path}"
+        )
+
+        return 0
 
     print(
         output

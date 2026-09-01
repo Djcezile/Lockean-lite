@@ -253,3 +253,169 @@ def test_cli_has_no_execution_authority_dependencies():
             cli,
             name,
         )
+
+def test_cli_html_format_uses_visual_renderer(
+    monkeypatch,
+):
+    credentials = SimpleNamespace(
+        api_key="paper-key",
+        secret_key="paper-secret",
+    )
+
+    monkeypatch.setattr(
+        "lockean_lite.market_evidence_cli.load_alpaca_credentials_from_environment",
+        lambda: credentials,
+    )
+
+    monkeypatch.setattr(
+        "lockean_lite.market_evidence_cli.fetch_official_vix_history",
+        lambda: "vix-csv",
+    )
+
+    monkeypatch.setattr(
+        "lockean_lite.market_evidence_cli.StockHistoricalDataClient",
+        lambda api_key, secret_key: "stock-client",
+    )
+
+    monkeypatch.setattr(
+        "lockean_lite.market_evidence_cli.run_market_evidence_demo",
+        lambda **kwargs: pytest.fail(
+            "text renderer must not run for HTML output"
+        ),
+    )
+
+    captured = {}
+
+    def visual_runner(**kwargs):
+        captured.update(
+            kwargs
+        )
+        return "<html>LOCKEAN</html>"
+
+    monkeypatch.setattr(
+        "lockean_lite.market_evidence_cli.run_visual_market_evidence_demo",
+        visual_runner,
+    )
+
+    output = run_market_evidence_cli(
+        completed_through=COMPLETED_THROUGH,
+        output_format="html",
+    )
+
+    assert output == (
+        "<html>LOCKEAN</html>"
+    )
+
+    assert captured == {
+        "stock_client": "stock-client",
+        "vix_csv_text": "vix-csv",
+        "completed_through": COMPLETED_THROUGH,
+        "start": datetime(
+            2025,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        ),
+    }
+
+
+def test_cli_main_writes_html_dashboard(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    output_path = (
+        tmp_path
+        / "lockean-demo.html"
+    )
+
+    captured = {}
+
+    def runner(**kwargs):
+        captured.update(
+            kwargs
+        )
+        return "<html>LOCKEAN</html>"
+
+    monkeypatch.setattr(
+        "lockean_lite.market_evidence_cli.run_market_evidence_cli",
+        runner,
+    )
+
+    exit_code = main(
+        [
+            "--completed-through",
+            "2026-08-31",
+            "--format",
+            "html",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    terminal_output = (
+        capsys.readouterr().out
+    )
+
+    assert exit_code == 0
+
+    assert captured == {
+        "completed_through": COMPLETED_THROUGH,
+        "output_format": "html",
+    }
+
+    assert output_path.read_text(
+        encoding="utf-8"
+    ) == "<html>LOCKEAN</html>"
+
+    assert (
+        "LOCKEAN DEMO OUTPUT WRITTEN"
+        in terminal_output
+    )
+
+    assert (
+        "FORMAT: HTML"
+        in terminal_output
+    )
+
+
+def test_cli_output_write_failure_fails_closed(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    monkeypatch.setattr(
+        "lockean_lite.market_evidence_cli.run_market_evidence_cli",
+        lambda **kwargs: "<html>LOCKEAN</html>",
+    )
+
+    missing_parent = (
+        tmp_path
+        / "does-not-exist"
+        / "lockean-demo.html"
+    )
+
+    exit_code = main(
+        [
+            "--completed-through",
+            "2026-08-31",
+            "--format",
+            "html",
+            "--output",
+            str(missing_parent),
+        ]
+    )
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+
+    assert (
+        "LOCKEAN DEMO FAILED CLOSED"
+        in output
+    )
+
+    assert (
+        "REASON: demo_output_write_failed"
+        in output
+    )

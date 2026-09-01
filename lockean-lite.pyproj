@@ -75,6 +75,8 @@
     <Compile Include="src\lockean_lite\risk_calculation.py" />
     <Compile Include="src\lockean_lite\trade_proposal.py" />
     <Compile Include="src\lockean_lite\trade_recommendation.py" />
+    <Compile Include="src\lockean_lite\visual_decision_report.py" />
+    <Compile Include="src\lockean_lite\visual_market_evidence_demo.py" />
     <Compile Include="src\lockean_lite\__init__.py" />
     <Compile Include="tests\test_ai_recommendation_provider.py" />
     <Compile Include="tests\test_alpaca_account_reader.py" />
@@ -104,6 +106,8 @@
     <Compile Include="tests\test_risk_calculation.py" />
     <Compile Include="tests\test_trade_proposal.py" />
     <Compile Include="tests\test_trade_recommendation.py" />
+    <Compile Include="tests\test_visual_decision_report.py" />
+    <Compile Include="tests\test_visual_market_evidence_demo.py" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in
