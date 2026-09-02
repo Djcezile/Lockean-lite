@@ -494,10 +494,10 @@ It can stop a real trade before the AI is even reached, and it can permit a real
 
 Fill these in before final submission:
 
-- **GitHub Repository:** `<repository-url>`
+- **GitHub Repository:** https://github.com/Djcezile/Lockean-lite
 - **Demo Video:** `<demo-video-url>`
 - **Team / Hackathon Page:** `<team-page-url>`
-- **Additional Demo Artifact:** `<optional-url>`
+- **Additional Demo Artifact:** https://djcezile.github.io/Lockean-lite/
 
 ---
 
@@ -505,15 +505,15 @@ Fill these in before final submission:
 
 Before submission:
 
-- [ ] Repository public and accessible
-- [ ] README current
-- [ ] Setup instructions smoke-tested
-- [ ] Secrets absent from repository
-- [ ] Full test suite green
-- [ ] Real rejection demo reproduced
-- [ ] Browser dashboard screenshot captured
+- [x] Repository public and accessible
+- [x] README current
+- [x] Setup instructions smoke-tested
+- [x] Secrets absent from repository
+- [x] Full test suite green
+- [x] Real rejection demo reproduced
+- [x] Browser dashboard screenshot captured
 - [ ] Successful paper execution captured if qualifying market evidence occurs
 - [ ] Genuine Alpaca order ID captured if submitted
 - [ ] Demo video recorded
-- [ ] Submission description finalized
+- [x] Submission description finalized
 - [ ] Team/hackathon links verified

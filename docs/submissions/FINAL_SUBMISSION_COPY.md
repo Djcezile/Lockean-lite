@@ -60,7 +60,8 @@ Missing evidence, excessive risk, tampering, forged authorization, or expired pe
 
 Replace these placeholders before final submission:
 
-- GitHub: `<repository-url>`
+- GitHub: https://github.com/Djcezile/Lockean-lite
+- Online Demo: https://djcezile.github.io/Lockean-lite/
 - Demo Video: `<demo-video-url>`
 - Team Page: `<team-page-url>`
 

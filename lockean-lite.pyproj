@@ -41,6 +41,10 @@
     <Content Include="docs\submissions\FINAL_SUBMISSION_COPY.md" />
     <Content Include="docs\submissions\HACKATHON_SUBMISSION_DRAFT.md" />
     <Content Include="docs\submissions\JUDGE_DEMO_NARRATIVE.md" />
+    <Content Include="LICENSE" />
+    <Content Include="docs\index.html" />
+    <Content Include="docs\submissions\GITHUB_REPO_SETTINGS.md" />
+    <Content Include="docs\submissions\LOCKEAN_LITE_PITCH_DECK.pptx" />
     <Content Include="lockean-lite.slnx" />
     <Content Include="pyproject.toml" />
     <Content Include="README.md" />

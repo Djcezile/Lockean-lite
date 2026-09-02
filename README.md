@@ -194,6 +194,15 @@ If real market evidence does not satisfy Lockean policy, the system does not tra
 
 ---
 
+### Real rejection dashboard
+
+![Lockean real-market rejection dashboard](docs/demo_evidence/02_real_rejection_dashboard.png)
+
+Additional evidence:
+
+- [Real rejection terminal output](docs/demo_evidence/01_real_rejection_terminal.png)
+- [Clean-checkout 163-test verification](docs/demo_evidence/03_clean_checkout_tests.png)
+
 ## Judge-Facing Read-Only Demo
 
 The real-market rejection path can be reproduced with one command:
@@ -216,6 +225,16 @@ It has no:
 It can observe and explain.
 
 It cannot execute.
+
+---
+
+## Online Read-Only Prototype
+
+The public static prototype is available at:
+
+https://djcezile.github.io/Lockean-lite/
+
+The page displays Lockean evidence and decisions only. It has no Authority, no receipt issuance, no Execution Gateway, and no broker-order path.
 
 ---
 
@@ -444,7 +463,7 @@ It is never supplied to the AI recommendation provider.
 Clone the repository:
 
 ```powershell
-git clone <repository-url>
+git clone https://github.com/Djcezile/Lockean-lite.git
 cd lockean-lite
 ```
 
@@ -464,6 +483,7 @@ For development or to run the test suite, install the optional development depen
 
 ```powershell
 python -m pip install -e ".[dev]"
+```
 
 ## Tests
 

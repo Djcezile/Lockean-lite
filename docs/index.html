@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lockean Lite - Independent AI Trade Authority</title>
+  <meta name="description" content="Read-only demonstration of Lockean Lite's independent execution authority for autonomous AI trading agents.">
+  <style>
+    :root { color-scheme: dark; --bg:#080d12; --panel:#111922; --border:#263545; --text:#f4f7fb; --muted:#9cb0c5; --ok:#62df9b; --bad:#ff6868; --accent:#8db9e8; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:Inter,Segoe UI,Arial,sans-serif; line-height:1.5; }
+    main { width:min(1040px,92vw); margin:0 auto; padding:64px 0 80px; }
+    h1 { font-size:clamp(2.2rem,6vw,4.6rem); margin:0; letter-spacing:.07em; }
+    .tagline { color:var(--accent); font-size:1.15rem; margin-top:4px; }
+    .thesis { font-size:clamp(1.25rem,2.5vw,1.8rem); max-width:850px; margin:42px 0; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+    .card { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:24px; }
+    .eyebrow { color:var(--accent); font-size:.78rem; letter-spacing:.12em; text-transform:uppercase; font-weight:700; }
+    .metric { font-size:2rem; font-weight:750; margin:12px 0 2px; }
+    .rows { margin-top:14px; }
+    .row { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border); }
+    .row:last-child { border-bottom:0; }
+    .pass { color:var(--ok); font-weight:700; }
+    .fail, .rejected { color:var(--bad); font-weight:700; }
+    .decision { border-color:#8f3434; }
+    .decision .metric { font-size:2.4rem; }
+    .wide { grid-column:1/-1; }
+    .truth { margin-top:26px; padding:20px 24px; border-left:4px solid var(--accent); background:var(--panel); }
+    img { width:100%; height:auto; border-radius:12px; border:1px solid var(--border); margin-top:20px; }
+    a { color:#a8cef4; }
+    footer { color:var(--muted); margin-top:42px; font-size:.92rem; }
+    @media (max-width:720px) { .grid { grid-template-columns:1fr; } .wide { grid-column:auto; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>LOCKEAN</h1>
+    <div class="tagline">Independent AI Trade Authority</div>
+    <p class="thesis"><strong>AI proposes. Lockean verifies. Authority decides. Only then may software act.</strong></p>
+  </header>
+
+  <section class="grid" aria-label="Real August 31, 2026 Lockean rejection proof">
+    <article class="card">
+      <div class="eyebrow">Verifiable market evidence</div>
+      <div class="metric">SPY 766.87</div>
+      <div>Alpaca</div>
+    </article>
+    <article class="card">
+      <div class="eyebrow">Verifiable market evidence</div>
+      <div class="metric">VIX 14.920000</div>
+      <div>Official Cboe history</div>
+    </article>
+
+    <article class="card">
+      <div class="eyebrow">Deterministic entry policy</div>
+      <div class="rows">
+        <div class="row"><span>Trend</span><span class="pass">PASS</span></div>
+        <div class="row"><span>Momentum</span><span class="pass">PASS</span></div>
+        <div class="row"><span>Breakout</span><span class="fail">FAIL</span></div>
+        <div class="row"><span>Volatility</span><span class="pass">PASS</span></div>
+      </div>
+    </article>
+
+    <article class="card decision">
+      <div class="eyebrow">Lockean decision</div>
+      <div class="metric rejected">REJECTED</div>
+      <code>breakout_filter_failed</code>
+    </article>
+
+    <article class="card wide">
+      <div class="eyebrow">Downstream authority</div>
+      <div class="rows">
+        <div class="row"><span>AI recommendation</span><strong>NOT REACHED</strong></div>
+        <div class="row"><span>Lockean Authority</span><strong>NOT REACHED</strong></div>
+        <div class="row"><span>Authorization Receipt</span><strong>NOT ISSUED</strong></div>
+        <div class="row"><span>Broker Order</span><strong>NO ORDER</strong></div>
+      </div>
+    </article>
+  </section>
+
+  <div class="truth">
+    This page is a static, read-only presentation layer. It cannot authorize, issue receipts, call the Execution Gateway, or submit broker orders.
+  </div>
+
+  <section>
+    <h2>Real demonstration evidence</h2>
+    <img src="demo_evidence/02_real_rejection_dashboard.png" alt="Lockean browser dashboard showing the real August 31 rejection">
+    <p>
+      <a href="demo_evidence/01_real_rejection_terminal.png">Terminal rejection proof</a>
+      &nbsp;|&nbsp;
+      <a href="demo_evidence/03_clean_checkout_tests.png">Clean-checkout test proof</a>
+      &nbsp;|&nbsp;
+      <a href="https://github.com/Djcezile/Lockean-lite">Source repository</a>
+    </p>
+  </section>
+
+  <footer>
+    Lockean Lite is a hackathon prototype operating against Alpaca paper trading. It is not financial advice or a production-ready live trading system.
+  </footer>
+</main>
+</body>
+</html>
