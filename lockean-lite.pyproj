@@ -34,6 +34,9 @@
     <Content Include="docs\build_log\2026-09-01_lite-day-5.md" />
     <Content Include="docs\build_log\2026-09-01_lite-day-6.md" />
     <Content Include="docs\decisions\2026-08-29_authorization-boundary.md" />
+    <Content Include="docs\demo_evidence\01_real_rejection_terminal.png" />
+    <Content Include="docs\demo_evidence\02_real_rejection_dashboard.png" />
+    <Content Include="docs\demo_evidence\03_clean_checkout_tests.png" />
     <Content Include="docs\submissions\DEMO_VIDEO_SCRIPT.md" />
     <Content Include="docs\submissions\FINAL_SUBMISSION_COPY.md" />
     <Content Include="docs\submissions\HACKATHON_SUBMISSION_DRAFT.md" />
