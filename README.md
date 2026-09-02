@@ -460,8 +460,10 @@ Install the project:
 ```powershell
 python -m pip install -e .
 ```
+For development or to run the test suite, install the optional development dependencies:
 
----
+```powershell
+python -m pip install -e ".[dev]"
 
 ## Tests
 
