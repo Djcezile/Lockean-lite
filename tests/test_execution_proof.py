@@ -227,23 +227,17 @@ def test_autonomous_cycle_propagates_execution_proof(
     )
 
     monkeypatch.setattr(
-    "lockean_lite.autonomous_cycle.bullish_trend_filter_passes",
-    lambda evidence: True,
-)
-
-    monkeypatch.setattr(
-    "lockean_lite.autonomous_cycle.momentum_filter_passes",
-    lambda evidence: True,
-)
-
-    monkeypatch.setattr(
-    "lockean_lite.autonomous_cycle.breakout_filter_passes",
-    lambda evidence: True,
-)
-
-    monkeypatch.setattr(
-    "lockean_lite.autonomous_cycle.volatility_filter_passes",
-    lambda evidence: True,
+    "lockean_lite.autonomous_cycle.build_agent_market_context",
+    lambda *,
+    spy_evidence,
+    vix_evidence: {
+        "spy_close": "765",
+        "trend": "PASS",
+        "momentum": "PASS",
+        "breakout": "PASS",
+        "vix_close": "15",
+        "volatility": "PASS",
+    },
 )
 
     monkeypatch.setattr(

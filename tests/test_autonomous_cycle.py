@@ -509,3 +509,80 @@ def test_autonomous_cycle_allows_agent_to_choose_no_trade(
 
     assert account_calls == []
     assert workflow_calls == []
+
+
+def test_autonomous_cycle_uses_shared_agent_market_context_builder(
+    monkeypatch,
+):
+    spy_evidence, vix_evidence = (
+        _agent_market_evidence()
+    )
+
+    expected_context = {
+        "spy_close": "shared-spy",
+        "trend": "PASS",
+        "momentum": "PASS",
+        "breakout": "FAIL",
+        "vix_close": "shared-vix",
+        "volatility": "FAIL",
+    }
+
+    captured = {}
+
+    def fake_context_builder(
+        *,
+        spy_evidence,
+        vix_evidence,
+    ):
+        captured["spy_evidence"] = (
+            spy_evidence
+        )
+        captured["vix_evidence"] = (
+            vix_evidence
+        )
+
+        return expected_context
+
+    monkeypatch.setattr(
+        "lockean_lite.autonomous_cycle.build_agent_market_context",
+        fake_context_builder,
+    )
+
+    def recommendation_provider(
+        candidates,
+        *,
+        market_context,
+    ):
+        captured["market_context"] = (
+            market_context
+        )
+
+        return None
+
+    result = run_autonomous_trade_cycle(
+        spy_evidence=spy_evidence,
+        vix_evidence=vix_evidence,
+        candidate_quotes_provider=(
+            _candidate_quotes
+        ),
+        recommendation_provider=(
+            recommendation_provider
+        ),
+        account_snapshot_provider=_account,
+        authority=object(),
+        execution_gateway=object(),
+    )
+
+    assert result.status == "NO_TRADE"
+
+    assert captured[
+        "spy_evidence"
+    ] is spy_evidence
+
+    assert captured[
+        "vix_evidence"
+    ] is vix_evidence
+
+    assert captured[
+        "market_context"
+    ] == expected_context
