@@ -1,9 +1,5 @@
 from dataclasses import dataclass
 from datetime import datetime
-
-from lockean_lite.market_entry_policy import (
-    evaluate_market_entry_policy,
-)
 from lockean_lite.market_evidence import MarketEvidence
 from lockean_lite.proposal_fingerprint import (
     fingerprint_trade_proposal,
@@ -76,17 +72,6 @@ def validate_market_evidence_for_proposal(
         return EvidenceValidationResult(
             accepted=False,
             reason="evidence_as_of_inconsistent",
-        )
-
-    entry_evaluation = evaluate_market_entry_policy(
-        spy_evidence=spy_evidence,
-        vix_evidence=vix_evidence,
-    )
-
-    if not entry_evaluation.passed:
-        return EvidenceValidationResult(
-            accepted=False,
-            reason=entry_evaluation.reason,
         )
 
     validated_evidence = ValidatedMarketEvidence(

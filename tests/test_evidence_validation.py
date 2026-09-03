@@ -7,7 +7,6 @@ from lockean_lite.evidence_validation import (
     ValidatedMarketEvidence,
     validate_market_evidence_for_proposal,
 )
-from lockean_lite.market_entry_policy import MarketEntryEvaluation
 from lockean_lite.market_evidence import MarketBar, MarketEvidence
 from lockean_lite.option_leg import OptionLeg
 from lockean_lite.proposal_fingerprint import fingerprint_trade_proposal
@@ -85,19 +84,7 @@ def _evidence(
     )
 
 
-def _force_entry_policy_pass(monkeypatch):
-    monkeypatch.setattr(
-        "lockean_lite.evidence_validation.evaluate_market_entry_policy",
-        lambda spy_evidence, vix_evidence: MarketEntryEvaluation(
-            passed=True,
-            reason="entry_conditions_satisfied",
-        ),
-    )
-
-
-def test_evidence_rejects_spy_symbol_that_does_not_match_proposal(monkeypatch):
-    _force_entry_policy_pass(monkeypatch)
-
+def test_evidence_rejects_spy_symbol_that_does_not_match_proposal():
     result = validate_market_evidence_for_proposal(
         proposal=_proposal(),
         spy_evidence=_evidence("spy-001", "QQQ"),
@@ -108,9 +95,7 @@ def test_evidence_rejects_spy_symbol_that_does_not_match_proposal(monkeypatch):
     assert result.reason == "proposal_evidence_symbol_mismatch"
 
 
-def test_evidence_rejects_wrong_volatility_symbol(monkeypatch):
-    _force_entry_policy_pass(monkeypatch)
-
+def test_evidence_rejects_wrong_volatility_symbol():
     result = validate_market_evidence_for_proposal(
         proposal=_proposal(),
         spy_evidence=_evidence("spy-001", "SPY"),
@@ -121,9 +106,7 @@ def test_evidence_rejects_wrong_volatility_symbol(monkeypatch):
     assert result.reason == "volatility_evidence_symbol_mismatch"
 
 
-def test_evidence_rejects_unsupported_source(monkeypatch):
-    _force_entry_policy_pass(monkeypatch)
-
+def test_evidence_rejects_unsupported_source():
     result = validate_market_evidence_for_proposal(
         proposal=_proposal(),
         spy_evidence=_evidence(
@@ -138,9 +121,7 @@ def test_evidence_rejects_unsupported_source(monkeypatch):
     assert result.reason == "unsupported_evidence_source"
 
 
-def test_evidence_rejects_mismatched_as_of(monkeypatch):
-    _force_entry_policy_pass(monkeypatch)
-
+def test_evidence_rejects_mismatched_as_of():
     result = validate_market_evidence_for_proposal(
         proposal=_proposal(),
         spy_evidence=_evidence("spy-001", "SPY"),
@@ -155,9 +136,7 @@ def test_evidence_rejects_mismatched_as_of(monkeypatch):
     assert result.reason == "evidence_as_of_mismatch"
 
 
-def test_evidence_rejects_as_of_that_does_not_match_latest_bar(monkeypatch):
-    _force_entry_policy_pass(monkeypatch)
-
+def test_evidence_rejects_as_of_that_does_not_match_latest_bar():
     result = validate_market_evidence_for_proposal(
         proposal=_proposal(),
         spy_evidence=_evidence(
@@ -172,28 +151,26 @@ def test_evidence_rejects_as_of_that_does_not_match_latest_bar(monkeypatch):
     assert result.reason == "evidence_as_of_inconsistent"
 
 
-def test_evidence_preserves_market_policy_failure_reason(monkeypatch):
-    monkeypatch.setattr(
-        "lockean_lite.evidence_validation.evaluate_market_entry_policy",
-        lambda spy_evidence, vix_evidence: MarketEntryEvaluation(
-            passed=False,
-            reason="momentum_filter_failed",
+def test_evidence_validation_accepts_valid_evidence_without_market_entry_policy():
+    proposal = _proposal()
+
+    result = validate_market_evidence_for_proposal(
+        proposal=proposal,
+        spy_evidence=_evidence(
+            "spy-001",
+            "SPY",
+        ),
+        vix_evidence=_evidence(
+            "vix-001",
+            "VIX",
         ),
     )
 
-    result = validate_market_evidence_for_proposal(
-        proposal=_proposal(),
-        spy_evidence=_evidence("spy-001", "SPY"),
-        vix_evidence=_evidence("vix-001", "VIX"),
-    )
-
-    assert result.accepted is False
-    assert result.reason == "momentum_filter_failed"
+    assert result.accepted is True
+    assert result.reason == "evidence_validated"
 
 
-def test_validated_evidence_is_bound_to_exact_proposal_fingerprint(monkeypatch):
-    _force_entry_policy_pass(monkeypatch)
-
+def test_validated_evidence_is_bound_to_exact_proposal_fingerprint():
     proposal = _proposal()
 
     result = validate_market_evidence_for_proposal(

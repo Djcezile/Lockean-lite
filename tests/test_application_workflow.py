@@ -118,7 +118,7 @@ def test_cycle_stops_before_authority_and_execution_when_evidence_fails():
         evidence_validation_result=(
             EvidenceValidationResult(
                 accepted=False,
-                reason="breakout_filter_failed",
+                reason="evidence_as_of_mismatch",
             )
         ),
         authority=authority,
@@ -126,7 +126,7 @@ def test_cycle_stops_before_authority_and_execution_when_evidence_fails():
     )
 
     assert result.status == "REJECTED"
-    assert result.reason == "breakout_filter_failed"
+    assert result.reason == "evidence_as_of_mismatch"
 
     assert authority.calls == []
     assert gateway.calls == []
