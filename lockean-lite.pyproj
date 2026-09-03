@@ -63,6 +63,7 @@
     <Compile Include="src\lockean_lite\ai_recommendation_provider.py" />
     <Compile Include="src\lockean_lite\alpaca_account_reader.py" />
     <Compile Include="src\lockean_lite\alpaca_client_factory.py" />
+    <Compile Include="src\lockean_lite\alpaca_cli_account_reader.py" />
     <Compile Include="src\lockean_lite\alpaca_credentials.py" />
     <Compile Include="src\lockean_lite\alpaca_execution_adapter.py" />
     <Compile Include="src\lockean_lite\alpaca_option_quote_adapter.py" />
@@ -95,6 +96,7 @@
     <Compile Include="src\lockean_lite\__init__.py" />
     <Compile Include="tests\test_ai_recommendation_provider.py" />
     <Compile Include="tests\test_alpaca_account_reader.py" />
+    <Compile Include="tests\test_alpaca_cli_account_reader.py" />
     <Compile Include="tests\test_alpaca_client_factory.py" />
     <Compile Include="tests\test_alpaca_credentials.py" />
     <Compile Include="tests\test_alpaca_execution_adapter.py" />

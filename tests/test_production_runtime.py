@@ -124,12 +124,12 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         fake_candidate_reader,
     )
 
-    def fake_account_provider():
+    def fake_cli_account_provider():
         return "account"
 
     monkeypatch.setattr(
-        "lockean_lite.production_runtime.read_paper_account_snapshot_from_environment",
-        fake_account_provider,
+        "lockean_lite.production_runtime.read_paper_account_snapshot_from_cli",
+        fake_cli_account_provider,
     )
 
     def fake_authority_constructor(
@@ -263,7 +263,7 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
 
     assert captured[
         "cycle_account_provider"
-    ] is fake_account_provider
+    ] is fake_cli_account_provider
 
     assert captured[
         "cycle_authority"
