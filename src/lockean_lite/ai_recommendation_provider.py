@@ -21,6 +21,17 @@ REQUIRED_RESPONSE_FIELDS = frozenset(
     }
 )
 
+NO_TRADE_RESPONSE_FIELDS = frozenset(
+    {
+        "decision",
+        "symbol",
+        "expiration",
+        "buy_strike",
+        "sell_strike",
+        "contracts",
+    }
+)
+
 
 def build_recommendation_prompt(
     *,
@@ -30,6 +41,7 @@ def build_recommendation_prompt(
         ...,
     ],
     maximum_allowed_loss: Decimal | None = None,
+    market_context: dict[str, str] | None = None,
 ) -> str:
     candidate_lines = []
 
@@ -49,6 +61,20 @@ def build_recommendation_prompt(
 
     policy_context = ""
 
+    market_context_text = ""
+
+    if market_context is not None:
+        market_context_lines = [
+            f"{key}={value}"
+            for key, value in market_context.items()
+        ]
+
+        market_context_text = (
+            "\nMARKET CONTEXT:\n"
+            + "\n".join(market_context_lines)
+            + "\n"
+        )
+
     if maximum_allowed_loss is not None:
         policy_context = (
         "\nLOCKEAN POLICY CONTEXT:\n"
@@ -60,17 +86,30 @@ def build_recommendation_prompt(
     )
 
     return (
-    "Recommend one defined-risk SPY bull call spread "
-    "using only the candidate options below.\n\n"
+    "You are the trading agent.\n\n"
+    "You decide whether the market opportunity "
+    "justifies a trade.\n\n"
+    "If you want to propose a defined-risk SPY bull "
+    "call spread using the candidate options below, "
+    "set decision=TRADE.\n"
+    "If you do not want to trade, "
+    "set decision=NO_TRADE.\n\n"
     "Return JSON only with exactly these fields:\n"
+    "decision\n"
     "symbol\n"
     "expiration\n"
     "buy_strike\n"
     "sell_strike\n"
     "contracts\n\n"
+    "For decision=NO_TRADE, symbol, expiration, "
+    "buy_strike, sell_strike, and contracts "
+    "must all be null.\n"
+    "For decision=TRADE, populate those fields using "
+    "only the candidate options below.\n\n"
     "Do not return pricing, risk calculations, "
     "authorization decisions, or broker instructions.\n"
     f"{policy_context}\n"
+    f"{market_context_text}\n"
     f"proposal_reference={proposal_id}\n\n"
     "CANDIDATES:\n"
     f"{candidate_text}"
@@ -95,12 +134,13 @@ class StructuredAIRecommendationProvider:
         self.model_callable = model_callable
 
     def __call__(
-        self,
-        candidate_quotes: tuple[
-            OptionQuoteSnapshot,
-            ...,
-        ],
-    ) -> SpreadRecommendation:
+    self,
+    candidate_quotes: tuple[
+        OptionQuoteSnapshot,
+        ...,
+    ],
+    market_context: dict[str, str] | None = None,
+) -> SpreadRecommendation | None:
         proposal_id = (
             self.proposal_id_provider()
         )
@@ -111,6 +151,7 @@ class StructuredAIRecommendationProvider:
             maximum_allowed_loss=(
                 self.maximum_allowed_loss
             ),
+            market_context=market_context,
         )
 
         raw_response = self.model_callable(
@@ -128,6 +169,45 @@ class StructuredAIRecommendationProvider:
             raise ValueError(
                 "ai_recommendation_invalid_json"
             ) from error
+
+
+        if (
+            isinstance(parsed, dict)
+            and frozenset(parsed.keys())
+            == NO_TRADE_RESPONSE_FIELDS
+        ):
+            decision = parsed["decision"]
+
+            if decision == "NO_TRADE":
+                no_trade_fields = (
+                    "symbol",
+                    "expiration",
+                    "buy_strike",
+                    "sell_strike",
+                    "contracts",
+                 )
+
+                if not all(
+                    parsed[field] is None
+                    for field in no_trade_fields
+                ):
+                    raise ValueError(
+                        "ai_recommendation_schema_invalid"
+        )
+
+                return None
+
+            if decision == "TRADE":
+                parsed = {
+                    field: parsed[field]
+                    for field in REQUIRED_RESPONSE_FIELDS
+                }
+
+            else:
+                raise ValueError(
+                    "ai_recommendation_schema_invalid"
+                )
+
 
         if (
             not isinstance(parsed, dict)

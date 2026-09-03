@@ -4,25 +4,51 @@ from openai import OpenAI
 RECOMMENDATION_SCHEMA = {
     "type": "object",
     "properties": {
-        "symbol": {
+        "decision": {
             "type": "string",
-            "enum": ["SPY"],
+            "enum": [
+                "TRADE",
+                "NO_TRADE",
+            ],
+        },
+        "symbol": {
+            "type": [
+                "string",
+                "null",
+            ],
+            "enum": [
+                "SPY",
+                None,
+            ],
         },
         "expiration": {
-            "type": "string",
+            "type": [
+                "string",
+                "null",
+            ],
         },
         "buy_strike": {
-            "type": "string",
+            "type": [
+                "string",
+                "null",
+            ],
         },
         "sell_strike": {
-            "type": "string",
+            "type": [
+                "string",
+                "null",
+            ],
         },
         "contracts": {
-            "type": "integer",
+            "type": [
+                "integer",
+                "null",
+            ],
             "minimum": 1,
         },
     },
     "required": [
+        "decision",
         "symbol",
         "expiration",
         "buy_strike",

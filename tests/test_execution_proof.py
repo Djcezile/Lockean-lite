@@ -227,12 +227,24 @@ def test_autonomous_cycle_propagates_execution_proof(
     )
 
     monkeypatch.setattr(
-        "lockean_lite.autonomous_cycle.evaluate_market_entry_policy",
-        lambda **kwargs: SimpleNamespace(
-            passed=True,
-            reason="entry_policy_passed",
-        ),
-    )
+    "lockean_lite.autonomous_cycle.bullish_trend_filter_passes",
+    lambda evidence: True,
+)
+
+    monkeypatch.setattr(
+    "lockean_lite.autonomous_cycle.momentum_filter_passes",
+    lambda evidence: True,
+)
+
+    monkeypatch.setattr(
+    "lockean_lite.autonomous_cycle.breakout_filter_passes",
+    lambda evidence: True,
+)
+
+    monkeypatch.setattr(
+    "lockean_lite.autonomous_cycle.volatility_filter_passes",
+    lambda evidence: True,
+)
 
     monkeypatch.setattr(
         "lockean_lite.autonomous_cycle.build_trade_proposal_from_recommendation",
@@ -258,14 +270,28 @@ def test_autonomous_cycle_propagates_execution_proof(
     )
 
     result = run_autonomous_trade_cycle(
-        spy_evidence=object(),
-        vix_evidence=object(),
+        spy_evidence=SimpleNamespace(
+    bars=(
+        SimpleNamespace(
+            close=Decimal("765.13"),
+        ),
+    ),
+),
+vix_evidence=SimpleNamespace(
+    bars=(
+        SimpleNamespace(
+            close=Decimal("15.20"),
+        ),
+    ),
+),
         candidate_quotes_provider=(
             lambda: ("candidate",)
         ),
         recommendation_provider=(
-            lambda candidates: "recommendation"
-        ),
+    lambda candidates, *, market_context: (
+        "recommendation"
+    )
+),
         account_snapshot_provider=(
             lambda: object()
         ),

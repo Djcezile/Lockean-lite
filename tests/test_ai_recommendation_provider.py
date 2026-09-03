@@ -267,3 +267,245 @@ def test_structured_ai_provider_passes_policy_context_to_model():
         recommendation,
         "maximum_loss",
     )
+
+def test_ai_prompt_receives_market_signal_context_without_gaining_authority():
+    prompt = build_recommendation_prompt(
+        proposal_id="proposal-pivot-context-001",
+        candidate_quotes=_candidates(),
+        maximum_allowed_loss=Decimal("150.00"),
+        market_context={
+            "spy_close": "765.13",
+            "trend": "PASS",
+            "momentum": "PASS",
+            "breakout": "FAIL",
+            "vix_close": "15.20",
+            "volatility": "FAIL",
+        },
+    )
+
+    assert "spy_close=765.13" in prompt
+    assert "trend=PASS" in prompt
+    assert "momentum=PASS" in prompt
+    assert "breakout=FAIL" in prompt
+    assert "vix_close=15.20" in prompt
+    assert "volatility=FAIL" in prompt
+
+    # Market information expands the agent's judgment,
+    # not its execution authority.
+    assert "net_debit" not in prompt
+    assert "authorization_receipt" not in prompt
+
+def test_structured_ai_provider_passes_market_context_to_model():
+    captured = {}
+
+    raw_response = """
+    {
+      "symbol": "SPY",
+      "expiration": "2026-09-18",
+      "buy_strike": "782",
+      "sell_strike": "787",
+      "contracts": 1
+    }
+    """
+
+    def fake_model(prompt):
+        captured["prompt"] = prompt
+        return raw_response
+
+    provider = StructuredAIRecommendationProvider(
+        proposal_id_provider=lambda: (
+            "proposal-pivot-context-002"
+        ),
+        model_callable=fake_model,
+        maximum_allowed_loss=Decimal("150.00"),
+    )
+
+    recommendation = provider(
+        _candidates(),
+        market_context={
+            "spy_close": "765.13",
+            "trend": "PASS",
+            "momentum": "PASS",
+            "breakout": "FAIL",
+            "vix_close": "15.20",
+            "volatility": "FAIL",
+        },
+    )
+
+    assert "spy_close=765.13" in captured["prompt"]
+    assert "trend=PASS" in captured["prompt"]
+    assert "momentum=PASS" in captured["prompt"]
+    assert "breakout=FAIL" in captured["prompt"]
+    assert "vix_close=15.20" in captured["prompt"]
+    assert "volatility=FAIL" in captured["prompt"]
+
+    assert recommendation.buy_strike == Decimal("782")
+    assert recommendation.sell_strike == Decimal("787")
+
+    assert not hasattr(
+        recommendation,
+        "net_debit",
+    )
+
+def test_structured_ai_provider_returns_none_for_explicit_no_trade():
+    raw_response = """
+    {
+      "decision": "NO_TRADE",
+      "symbol": null,
+      "expiration": null,
+      "buy_strike": null,
+      "sell_strike": null,
+      "contracts": null
+    }
+    """
+
+    provider = StructuredAIRecommendationProvider(
+        proposal_id_provider=lambda: (
+            "proposal-agent-decision-001"
+        ),
+        model_callable=lambda prompt: raw_response,
+        maximum_allowed_loss=Decimal("150.00"),
+    )
+
+    recommendation = provider(
+        _candidates(),
+        market_context={
+            "spy_close": "765.13",
+            "trend": "PASS",
+            "momentum": "PASS",
+            "breakout": "FAIL",
+            "vix_close": "15.20",
+            "volatility": "FAIL",
+        },
+    )
+
+    assert recommendation is None
+
+def test_structured_ai_provider_returns_recommendation_for_explicit_trade():
+    raw_response = """
+    {
+      "decision": "TRADE",
+      "symbol": "SPY",
+      "expiration": "2026-09-18",
+      "buy_strike": "782",
+      "sell_strike": "787",
+      "contracts": 1
+    }
+    """
+
+    provider = StructuredAIRecommendationProvider(
+        proposal_id_provider=lambda: (
+            "proposal-agent-decision-002"
+        ),
+        model_callable=lambda prompt: raw_response,
+        maximum_allowed_loss=Decimal("150.00"),
+    )
+
+    recommendation = provider(
+        _candidates(),
+        market_context={
+            "spy_close": "765.13",
+            "trend": "PASS",
+            "momentum": "PASS",
+            "breakout": "FAIL",
+            "vix_close": "15.20",
+            "volatility": "FAIL",
+        },
+    )
+
+    assert recommendation.proposal_id == (
+        "proposal-agent-decision-002"
+    )
+
+    assert recommendation.symbol == "SPY"
+
+    assert recommendation.expiration == date(
+        2026,
+        9,
+        18,
+    )
+
+    assert recommendation.buy_strike == Decimal(
+        "782"
+    )
+
+    assert recommendation.sell_strike == Decimal(
+        "787"
+    )
+
+    assert recommendation.contracts == 1
+
+    assert not hasattr(
+        recommendation,
+        "net_debit",
+    )
+
+    assert not hasattr(
+        recommendation,
+        "authorization_receipt",
+    )
+
+def test_ai_prompt_assigns_trade_decision_to_agent():
+    prompt = build_recommendation_prompt(
+        proposal_id="proposal-agent-decision-003",
+        candidate_quotes=_candidates(),
+        maximum_allowed_loss=Decimal("150.00"),
+        market_context={
+            "spy_close": "765.13",
+            "trend": "PASS",
+            "momentum": "PASS",
+            "breakout": "FAIL",
+            "vix_close": "15.20",
+            "volatility": "FAIL",
+        },
+    )
+
+    assert "decision" in prompt
+    assert "TRADE" in prompt
+    assert "NO_TRADE" in prompt
+
+    assert (
+        "You decide whether the market opportunity "
+        "justifies a trade."
+        in prompt
+    )
+
+    # More trading judgment does not grant authority.
+    assert "authorization_receipt" not in prompt
+    assert "broker_order" not in prompt
+
+def test_structured_ai_provider_rejects_unknown_agent_decision():
+    raw_response = """
+    {
+      "decision": "HOLD",
+      "symbol": null,
+      "expiration": null,
+      "buy_strike": null,
+      "sell_strike": null,
+      "contracts": null
+    }
+    """
+
+    provider = StructuredAIRecommendationProvider(
+        proposal_id_provider=lambda: (
+            "proposal-agent-decision-invalid-001"
+        ),
+        model_callable=lambda prompt: raw_response,
+        maximum_allowed_loss=Decimal("150.00"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="ai_recommendation_schema_invalid",
+    ):
+        provider(
+            _candidates(),
+            market_context={
+                "spy_close": "765.13",
+                "trend": "PASS",
+                "momentum": "PASS",
+                "breakout": "FAIL",
+                "vix_close": "15.20",
+                "volatility": "FAIL",
+            },
+        )

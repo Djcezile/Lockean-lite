@@ -9,6 +9,7 @@ from lockean_lite.openai_recommendation_model import (
 
 VALID_RESPONSE = """
 {
+  "decision": "TRADE",
   "symbol": "SPY",
   "expiration": "2026-09-18",
   "buy_strike": "782",
@@ -99,12 +100,13 @@ def test_openai_model_uses_strict_recommendation_schema():
     ] is False
 
     assert set(schema["required"]) == {
-        "symbol",
-        "expiration",
-        "buy_strike",
-        "sell_strike",
-        "contracts",
-    }
+    "decision",
+    "symbol",
+    "expiration",
+    "buy_strike",
+    "sell_strike",
+    "contracts",
+}
 
 
 def test_openai_model_fails_closed_on_empty_response():
@@ -139,3 +141,84 @@ def test_openai_model_translates_api_failure_into_lockean_reason():
         model(
             "recommend a spread"
         )
+
+def test_openai_model_schema_supports_trade_or_no_trade_decision():
+    client = FakeClient()
+
+    model = OpenAIRecommendationModel(
+        client=client,
+    )
+
+    model(
+        "evaluate the market"
+    )
+
+    request = client.responses.calls[0]
+
+    schema = (
+        request["text"]["format"]["schema"]
+    )
+
+    assert "decision" in schema["properties"]
+
+    assert schema["properties"]["decision"] == {
+        "type": "string",
+        "enum": [
+            "TRADE",
+            "NO_TRADE",
+        ],
+    }
+
+    assert set(schema["required"]) == {
+        "decision",
+        "symbol",
+        "expiration",
+        "buy_strike",
+        "sell_strike",
+        "contracts",
+    }
+
+    assert schema["properties"]["symbol"] == {
+        "type": [
+            "string",
+            "null",
+        ],
+        "enum": [
+            "SPY",
+            None,
+        ],
+    }
+
+    assert schema["properties"]["expiration"] == {
+        "type": [
+            "string",
+            "null",
+        ],
+    }
+
+    assert schema["properties"]["buy_strike"] == {
+        "type": [
+            "string",
+            "null",
+        ],
+    }
+
+    assert schema["properties"]["sell_strike"] == {
+        "type": [
+            "string",
+            "null",
+        ],
+    }
+
+    assert schema["properties"]["contracts"] == {
+        "type": [
+            "integer",
+            "null",
+        ],
+        "minimum": 1,
+    }
+
+    assert (
+        schema["additionalProperties"]
+        is False
+    )

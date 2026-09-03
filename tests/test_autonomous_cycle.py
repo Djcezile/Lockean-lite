@@ -1,4 +1,13 @@
-from datetime import date, datetime, timezone
+from datetime import (
+    date,
+    datetime,
+    timedelta,
+    timezone,
+)
+from lockean_lite.market_evidence import (
+    MarketBar,
+    MarketEvidence,
+)
 from decimal import Decimal
 
 from lockean_lite.application_workflow import (
@@ -10,9 +19,6 @@ from lockean_lite.autonomous_cycle import (
 from lockean_lite.evidence_validation import (
     EvidenceValidationResult,
     ValidatedMarketEvidence,
-)
-from lockean_lite.market_entry_policy import (
-    MarketEntryEvaluation,
 )
 from lockean_lite.option_quote_snapshot import (
     OptionQuoteSnapshot,
@@ -105,31 +111,179 @@ def _account():
         options_trading_level=3,
     )
 
+def _agent_market_evidence():
+    start = datetime(
+        2026,
+        1,
+        1,
+        21,
+        0,
+        tzinfo=timezone.utc,
+    )
 
-def test_autonomous_cycle_stops_before_ai_and_broker_work_when_market_policy_fails(
+    spy_closes = (
+        [Decimal("700")] * 150
+        + [Decimal("760")] * 49
+        + [Decimal("765")]
+    )
+
+    spy_bars = tuple(
+        MarketBar(
+            timestamp=(
+                start
+                + timedelta(days=index)
+            ),
+            open=close,
+            high=(
+                close + Decimal("10")
+                if index < 199
+                else close + Decimal("1")
+            ),
+            low=close - Decimal("1"),
+            close=close,
+            volume=1_000_000,
+        )
+        for index, close in enumerate(
+            spy_closes
+        )
+    )
+
+    spy_evidence = MarketEvidence(
+        evidence_id="spy-agent-context",
+        symbol="SPY",
+        as_of=spy_bars[-1].timestamp,
+        source="alpaca",
+        bars=spy_bars,
+    )
+
+    vix_closes = (
+        [Decimal("15.20")] * 20
+    )
+
+    vix_bars = tuple(
+        MarketBar(
+            timestamp=(
+                spy_bars[-20 + index].timestamp
+            ),
+            open=close,
+            high=close,
+            low=close,
+            close=close,
+            volume=1,
+        )
+        for index, close in enumerate(
+            vix_closes
+        )
+    )
+
+    vix_evidence = MarketEvidence(
+        evidence_id="vix-agent-context",
+        symbol="VIX",
+        as_of=spy_evidence.as_of,
+        source="cboe",
+        bars=vix_bars,
+    )
+
+    return spy_evidence, vix_evidence
+
+def test_autonomous_cycle_passes_real_market_signal_context_to_agent(
+    monkeypatch,
+):
+    captured = {}
+
+    spy_evidence, vix_evidence = (
+        _agent_market_evidence()
+    )
+
+    missing_contract_recommendation = (
+        SpreadRecommendation(
+            proposal_id="autonomous-pivot-002",
+            symbol="SPY",
+            expiration=date(2026, 9, 18),
+            buy_strike=Decimal("782"),
+            sell_strike=Decimal("788"),
+            contracts=1,
+        )
+    )
+
+    def recommendation_provider(
+        candidates,
+        *,
+        market_context,
+    ):
+        captured["market_context"] = (
+            market_context
+        )
+
+        return missing_contract_recommendation
+
+    result = run_autonomous_trade_cycle(
+        spy_evidence=spy_evidence,
+        vix_evidence=vix_evidence,
+        candidate_quotes_provider=(
+            _candidate_quotes
+        ),
+        recommendation_provider=(
+            recommendation_provider
+        ),
+        account_snapshot_provider=_account,
+        authority=object(),
+        execution_gateway=object(),
+    )
+
+    assert result.status == "REJECTED"
+    assert (
+        result.reason
+        == "recommended_option_quote_missing"
+    )
+
+    assert captured["market_context"] == {
+        "spy_close": "765",
+        "trend": "PASS",
+        "momentum": "FAIL",
+        "breakout": "FAIL",
+        "vix_close": "15.20",
+        "volatility": "FAIL",
+    }
+
+
+def test_autonomous_cycle_allows_agent_to_evaluate_when_old_market_signal_fails(
     monkeypatch,
 ):
     candidate_calls = []
     recommendation_calls = []
     account_calls = []
 
-    monkeypatch.setattr(
-        "lockean_lite.autonomous_cycle.evaluate_market_entry_policy",
-        lambda spy_evidence, vix_evidence: MarketEntryEvaluation(
-            passed=False,
-            reason="breakout_filter_failed",
-        ),
+    spy_evidence, vix_evidence = (
+    _agent_market_evidence()
+)
+
+    missing_contract_recommendation = SpreadRecommendation(
+        proposal_id="autonomous-pivot-001",
+        symbol="SPY",
+        expiration=date(2026, 9, 18),
+        buy_strike=Decimal("782"),
+        sell_strike=Decimal("788"),
+        contracts=1,
     )
 
+    def candidate_provider():
+        candidate_calls.append(True)
+        return _candidate_quotes()
+
+    def recommendation_provider(
+        candidates,
+        *,
+        market_context,
+    ):
+        recommendation_calls.append(candidates)
+        return missing_contract_recommendation
+
     result = run_autonomous_trade_cycle(
-        spy_evidence=object(),
-        vix_evidence=object(),
-        candidate_quotes_provider=lambda: (
-            candidate_calls.append(True)
-        ),
-        recommendation_provider=lambda candidates: (
-            recommendation_calls.append(True)
-        ),
+        spy_evidence=spy_evidence,
+        vix_evidence=vix_evidence,
+        candidate_quotes_provider=candidate_provider,
+        recommendation_provider=recommendation_provider,
         account_snapshot_provider=lambda: (
             account_calls.append(True)
         ),
@@ -138,10 +292,13 @@ def test_autonomous_cycle_stops_before_ai_and_broker_work_when_market_policy_fai
     )
 
     assert result.status == "REJECTED"
-    assert result.reason == "breakout_filter_failed"
+    assert (
+        result.reason
+        == "recommended_option_quote_missing"
+    )
 
-    assert candidate_calls == []
-    assert recommendation_calls == []
+    assert candidate_calls == [True]
+    assert len(recommendation_calls) == 1
     assert account_calls == []
 
 
@@ -150,13 +307,9 @@ def test_autonomous_cycle_lets_ai_choose_structure_but_lockean_sets_proposal_deb
 ):
     observed = {}
 
-    monkeypatch.setattr(
-        "lockean_lite.autonomous_cycle.evaluate_market_entry_policy",
-        lambda spy_evidence, vix_evidence: MarketEntryEvaluation(
-            passed=True,
-            reason="entry_conditions_satisfied",
-        ),
-    )
+    spy_evidence, vix_evidence = (
+    _agent_market_evidence()
+)
 
     validated = ValidatedMarketEvidence(
         proposal_fingerprint="fingerprint",
@@ -208,10 +361,14 @@ def test_autonomous_cycle_lets_ai_choose_structure_but_lockean_sets_proposal_deb
     )
 
     result = run_autonomous_trade_cycle(
-        spy_evidence=object(),
-        vix_evidence=object(),
+        spy_evidence=spy_evidence,
+        vix_evidence=vix_evidence,
         candidate_quotes_provider=_candidate_quotes,
-        recommendation_provider=lambda candidates: _recommendation(),
+        recommendation_provider=(
+    lambda candidates, *, market_context: (
+        _recommendation()
+    )
+),
         account_snapshot_provider=_account,
         authority=object(),
         execution_gateway=object(),
@@ -233,13 +390,9 @@ def test_autonomous_cycle_fails_closed_when_ai_recommendation_cannot_be_resolved
 ):
     account_calls = []
 
-    monkeypatch.setattr(
-        "lockean_lite.autonomous_cycle.evaluate_market_entry_policy",
-        lambda spy_evidence, vix_evidence: MarketEntryEvaluation(
-            passed=True,
-            reason="entry_conditions_satisfied",
-        ),
-    )
+    spy_evidence, vix_evidence = (
+    _agent_market_evidence()
+)
 
     missing_contract_recommendation = SpreadRecommendation(
         proposal_id="autonomous-002",
@@ -251,12 +404,14 @@ def test_autonomous_cycle_fails_closed_when_ai_recommendation_cannot_be_resolved
     )
 
     result = run_autonomous_trade_cycle(
-        spy_evidence=object(),
-        vix_evidence=object(),
+        spy_evidence=spy_evidence,
+        vix_evidence=vix_evidence,
         candidate_quotes_provider=_candidate_quotes,
-        recommendation_provider=lambda candidates: (
-            missing_contract_recommendation
-        ),
+        recommendation_provider=(
+    lambda candidates, *, market_context: (
+        missing_contract_recommendation
+    )
+),
         account_snapshot_provider=lambda: (
             account_calls.append(True)
         ),
@@ -279,13 +434,9 @@ def test_autonomous_cycle_stops_before_account_and_execution_when_evidence_bindi
     account_calls = []
     workflow_calls = []
 
-    monkeypatch.setattr(
-        "lockean_lite.autonomous_cycle.evaluate_market_entry_policy",
-        lambda spy_evidence, vix_evidence: MarketEntryEvaluation(
-            passed=True,
-            reason="entry_conditions_satisfied",
-        ),
-    )
+    spy_evidence, vix_evidence = (
+    _agent_market_evidence()
+)
 
     monkeypatch.setattr(
         "lockean_lite.autonomous_cycle.validate_market_evidence_for_proposal",
@@ -301,10 +452,14 @@ def test_autonomous_cycle_stops_before_account_and_execution_when_evidence_bindi
     )
 
     result = run_autonomous_trade_cycle(
-        spy_evidence=object(),
-        vix_evidence=object(),
+        spy_evidence=spy_evidence,
+        vix_evidence=vix_evidence,
         candidate_quotes_provider=_candidate_quotes,
-        recommendation_provider=lambda candidates: _recommendation(),
+        recommendation_provider=(
+    lambda candidates, *, market_context: (
+        _recommendation()
+    )
+),
         account_snapshot_provider=lambda: (
             account_calls.append(True)
         ),
@@ -314,6 +469,43 @@ def test_autonomous_cycle_stops_before_account_and_execution_when_evidence_bindi
 
     assert result.status == "REJECTED"
     assert result.reason == "evidence_as_of_mismatch"
+
+    assert account_calls == []
+    assert workflow_calls == []
+
+def test_autonomous_cycle_allows_agent_to_choose_no_trade(
+    monkeypatch,
+):
+    spy_evidence, vix_evidence = (
+        _agent_market_evidence()
+    )
+
+    account_calls = []
+    workflow_calls = []
+
+    monkeypatch.setattr(
+        "lockean_lite.autonomous_cycle.run_trade_decision_cycle",
+        lambda **kwargs: workflow_calls.append(True),
+    )
+
+    result = run_autonomous_trade_cycle(
+        spy_evidence=spy_evidence,
+        vix_evidence=vix_evidence,
+        candidate_quotes_provider=(
+            _candidate_quotes
+        ),
+        recommendation_provider=(
+            lambda candidates, *, market_context: None
+        ),
+        account_snapshot_provider=lambda: (
+            account_calls.append(True)
+        ),
+        authority=object(),
+        execution_gateway=object(),
+    )
+
+    assert result.status == "NO_TRADE"
+    assert result.reason == "agent_declined_trade"
 
     assert account_calls == []
     assert workflow_calls == []
