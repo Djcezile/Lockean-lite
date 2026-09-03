@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from lockean_lite.production_runtime import (
+    run_live_production_autonomous_cycle,
     run_production_autonomous_cycle,
 )
 
@@ -294,4 +295,177 @@ def test_production_runtime_rejects_missing_authority_signing_key():
             proposal_id_provider=lambda: (
                 "production-002"
             ),
+        )
+
+
+def test_live_production_runtime_builds_market_evidence_before_running_cycle(
+    monkeypatch,
+):
+    captured = {}
+
+    fake_credentials = SimpleNamespace(
+        api_key="test-api-key",
+        secret_key="test-secret-key",
+    )
+
+    fake_stock_client = object()
+    fake_spy_evidence = object()
+    fake_vix_evidence = object()
+    expected_result = object()
+
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.load_alpaca_credentials_from_environment",
+        lambda: fake_credentials,
+    )
+
+    class FakeStockHistoricalDataClient:
+        def __new__(
+            cls,
+            api_key,
+            secret_key,
+        ):
+            captured["stock_api_key"] = api_key
+            captured["stock_secret_key"] = secret_key
+            return fake_stock_client
+
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.StockHistoricalDataClient",
+        FakeStockHistoricalDataClient,
+    )
+
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.fetch_official_vix_history",
+        lambda: "fake-vix-csv",
+    )
+
+    def fake_read_spy_daily_evidence(
+        *,
+        client,
+        completed_through,
+        start,
+    ):
+        captured["spy_client"] = client
+        captured["completed_through"] = (
+            completed_through
+        )
+        captured["start"] = start
+
+        return fake_spy_evidence
+
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.read_spy_daily_evidence",
+        fake_read_spy_daily_evidence,
+    )
+
+    def fake_read_vix_daily_evidence(
+        *,
+        csv_text,
+        completed_through,
+    ):
+        captured["vix_csv_text"] = csv_text
+
+        return fake_vix_evidence
+
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.read_cboe_vix_daily_evidence",
+        fake_read_vix_daily_evidence,
+    )
+
+    def fake_run_production_cycle(**kwargs):
+        captured["spy_evidence"] = (
+            kwargs["spy_evidence"]
+        )
+        captured["vix_evidence"] = (
+            kwargs["vix_evidence"]
+        )
+
+        return expected_result
+
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.run_production_autonomous_cycle",
+        fake_run_production_cycle,
+    )
+
+    result = run_live_production_autonomous_cycle(
+        completed_through=date(
+            2026,
+            9,
+            2,
+        ),
+        expiration=date(
+            2026,
+            9,
+            18,
+        ),
+        maximum_allowed_loss=Decimal(
+            "150.00"
+        ),
+        authorization_signing_key=(
+            b"authority-test-key"
+        ),
+    )
+
+    assert result is expected_result
+
+    assert captured[
+        "stock_api_key"
+    ] == "test-api-key"
+
+    assert captured[
+        "stock_secret_key"
+    ] == "test-secret-key"
+
+    assert captured[
+        "spy_client"
+    ] is fake_stock_client
+
+    assert captured[
+        "vix_csv_text"
+    ] == "fake-vix-csv"
+
+    assert captured[
+        "spy_evidence"
+    ] is fake_spy_evidence
+
+    assert captured[
+        "vix_evidence"
+    ] is fake_vix_evidence
+
+
+def test_live_production_runtime_rejects_missing_signing_key_before_external_evidence(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.load_alpaca_credentials_from_environment",
+        lambda: pytest.fail(
+            "credentials must not be loaded"
+        ),
+    )
+
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.fetch_official_vix_history",
+        lambda: pytest.fail(
+            "VIX evidence must not be fetched"
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="authorization_signing_key_required",
+    ):
+        run_live_production_autonomous_cycle(
+            completed_through=date(
+                2026,
+                9,
+                2,
+            ),
+            expiration=date(
+                2026,
+                9,
+                18,
+            ),
+            maximum_allowed_loss=Decimal(
+                "150.00"
+            ),
+            authorization_signing_key=b"",
         )
