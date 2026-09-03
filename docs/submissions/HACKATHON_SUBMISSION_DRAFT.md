@@ -72,7 +72,7 @@ Independent Risk Calculation
         ↓
 Evidence / Proposal Fingerprint Validation
         ↓
-Paper Account Eligibility
+Paper Account Eligibility (Alpaca CLI, read-only)
         ↓
 Lockean Authority
         ↓
@@ -140,6 +140,8 @@ Lockean independently verifies:
 - Authorization Receipt expiration,
 - exact proposal match at execution time.
 
+Paper-account evidence is obtained through the official Alpaca CLI using `alpaca api GET /v2/account --quiet`. Lockean strictly validates and normalizes that response. The CLI is evidence-only: it cannot authorize a recommendation, issue a receipt, or submit a broker order.
+
 ---
 
 ## Why Authorization Receipts Matter
@@ -190,6 +192,22 @@ BROKER ORDER SUBMITTED: NO
 No threshold was changed to manufacture a successful result.
 
 The rejection is the intended behavior.
+
+The completed September 2, 2026 session produced another real rejection:
+
+```text
+SPY / Alpaca: 765.13
+VIX / Cboe:   15.200000
+
+Trend:      PASS
+Momentum:   PASS
+Breakout:   FAIL
+Volatility: FAIL
+
+DECISION: REJECTED
+REASON: breakout_filter_failed
+BROKER ORDER SUBMITTED: NO
+```
 
 ---
 
@@ -270,6 +288,8 @@ The complete production execution path is implemented.
 
 The remaining real-market acceptance criterion is the first genuine qualifying evidence-backed Alpaca paper order through the full Lockean authority chain.
 
+The latest completed September 2 session remained rejected because the breakout and volatility requirements did not pass.
+
 Lockean will not weaken its deterministic market policy merely to manufacture a successful demo.
 
 If the current completed session does not qualify, the system remains rejected by design.
@@ -306,12 +326,12 @@ Lockean Lite uses Alpaca for:
 - SPY historical market evidence,
 - option-contract discovery,
 - option quote retrieval,
-- paper-account state,
+- read-only paper-account state through Alpaca CLI,
 - options eligibility,
 - broker-facing multi-leg order construction,
 - paper-order submission.
 
-The broker is the final execution destination, not the source of Lockean's policy decisions.
+The Trading API remains the final paper-execution destination. The official Alpaca CLI is used separately as a read-only account-evidence boundary. Neither source owns Lockean policy or execution authorization.
 
 ---
 
@@ -391,7 +411,7 @@ Lockean Lite is built around these non-negotiable properties:
 Current verified engineering state:
 
 ```text
-163 tests passed
+178 tests passed
 0 regressions
 1 known third-party dependency warning
 ```
@@ -405,6 +425,7 @@ The tests cover, among other things:
 - deterministic market policy,
 - evidence validation,
 - account eligibility,
+- Alpaca CLI invocation and fail-closed account-evidence handling,
 - Authorization Receipt issuance,
 - signature verification,
 - expiration,
@@ -426,6 +447,7 @@ The tests cover, among other things:
 - Alpaca Paper Trading
 - Alpaca Market Data
 - Alpaca Options APIs
+- Alpaca CLI
 - OpenAI Responses API
 - Official Cboe VIX history
 - HMAC-SHA256 Authorization Receipts
@@ -509,11 +531,12 @@ Before submission:
 - [x] README current
 - [x] Setup instructions smoke-tested
 - [x] Secrets absent from repository
-- [x] Full test suite green
+- [x] Full test suite green — 178 passed
+- [x] Alpaca CLI read-only paper-account evidence integrated
 - [x] Real rejection demo reproduced
 - [x] Browser dashboard screenshot captured
 - [ ] Successful paper execution captured if qualifying market evidence occurs
 - [ ] Genuine Alpaca order ID captured if submitted
-- [ ] Demo video recorded
+- [x] Demo video recorded
 - [x] Submission description finalized
 - [ ] Team/hackathon links verified

@@ -94,6 +94,7 @@ flowchart TD
     F --> G[Independent Risk Calculation]
     G --> H[Evidence / Proposal Fingerprint Validation]
     H --> I[Paper Account Eligibility]
+    P[Alpaca CLI Read-Only Paper Account Evidence] --> I
     I --> J[Lockean Authority]
     J -->|Rejected| R
     J -->|Authorized| K[Signed Short-Lived Authorization Receipt]
@@ -105,6 +106,8 @@ flowchart TD
 ```
 
 There is no AI → broker shortcut.
+
+Paper-account evidence enters through the official Alpaca CLI in read-only mode. Lockean calls `alpaca api GET /v2/account --quiet`, strictly validates the response, and normalizes only the account fields required by Lockean Authority. The CLI cannot issue Authorization Receipts or submit broker orders.
 
 ---
 
@@ -191,6 +194,30 @@ No threshold was changed to force a successful result.
 That behavior is intentional.
 
 If real market evidence does not satisfy Lockean policy, the system does not trade.
+
+### Latest completed-session check
+
+For the completed **September 2, 2026** session:
+
+```text
+SPY / Alpaca: 765.13
+VIX / Cboe:   15.200000
+
+Trend:      PASS
+Momentum:   PASS
+Breakout:   FAIL
+Volatility: FAIL
+
+DECISION: REJECTED
+REASON: breakout_filter_failed
+
+AI RECOMMENDATION REACHED: NO
+AUTHORITY REACHED: NO
+AUTHORIZATION RECEIPT ISSUED: NO
+BROKER ORDER SUBMITTED: NO
+```
+
+Again, no threshold was changed in response to the real-market rejection.
 
 ---
 
@@ -323,6 +350,14 @@ The AI may know this limit as planning context, but Lockean independently determ
 ---
 
 ## Paper Account Verification
+
+Production paper-account evidence is sourced through the official Alpaca CLI using the read-only raw account command:
+
+```text
+alpaca api GET /v2/account --quiet
+```
+
+The adapter rejects missing CLI availability, timeouts, nonzero exit codes, malformed JSON, missing required fields, invalid field types, and any environment configuration that opts into Alpaca live trading.
 
 Before authorization, Lockean independently checks normalized Alpaca paper-account evidence including:
 
@@ -485,6 +520,24 @@ For development or to run the test suite, install the optional development depen
 python -m pip install -e ".[dev]"
 ```
 
+### Alpaca CLI prerequisite for the production runtime
+
+The execution-capable production runtime requires the official Alpaca CLI to be installed and available on `PATH`.
+
+Lockean Lite was acceptance-tested with:
+
+```text
+Alpaca CLI 0.0.14
+```
+
+Verify installation with:
+
+```powershell
+alpaca version
+```
+
+The normal pytest suite does not require access to a real broker account because the CLI subprocess boundary is tested with deterministic fakes.
+
 ## Tests
 
 Run the complete test suite:
@@ -496,7 +549,7 @@ python -m pytest -q
 Current verified repository state:
 
 ```text
-163 passed
+178 passed
 0 regressions
 1 known third-party websockets deprecation warning
 ```
@@ -532,6 +585,7 @@ Lockean Lite currently integrates:
 - Alpaca Paper Trading
 - Alpaca Market Data
 - Alpaca Options APIs
+- Alpaca CLI for read-only paper-account evidence
 - OpenAI Responses API
 - Official Cboe VIX history
 - deterministic policy evaluation
@@ -564,6 +618,7 @@ Completed:
 - proposal fingerprinting
 - independent risk calculation
 - paper-account eligibility checks
+- official Alpaca CLI read-only account-evidence adapter
 - Lockean Authority
 - signed short-lived Authorization Receipts
 - independent Execution Gateway
