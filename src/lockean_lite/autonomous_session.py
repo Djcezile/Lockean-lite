@@ -5,8 +5,15 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
+from alpaca.data.historical import (
+    OptionHistoricalDataClient,
+)
+
 from lockean_lite.alpaca_client_factory import (
     create_paper_trading_client_from_environment,
+)
+from lockean_lite.alpaca_credentials import (
+    load_alpaca_credentials_from_environment,
 )
 from lockean_lite.paper_portfolio_snapshot import (
     COMPETITION_STARTING_EQUITY,
@@ -16,6 +23,9 @@ from lockean_lite.paper_portfolio_snapshot import (
 from lockean_lite.portfolio_gate import (
     evaluate_portfolio_entry,
 )
+from lockean_lite.position_exit_manager import (
+    run_paper_spread_exit_cycle,
+)
 from lockean_lite.production_runtime import (
     run_live_production_autonomous_cycle,
 )
@@ -24,6 +34,8 @@ from lockean_lite.production_runtime import (
 DEFAULT_INTERVAL_SECONDS = 300
 DEFAULT_MAXIMUM_OPEN_SPREADS = 5
 DEFAULT_MAXIMUM_DAILY_LOSS = Decimal("750.00")
+DEFAULT_TAKE_PROFIT_PERCENT = Decimal("10.00")
+DEFAULT_STOP_LOSS_PERCENT = Decimal("50.00")
 
 
 @dataclass(frozen=True)
@@ -39,6 +51,7 @@ def run_autonomous_paper_session(
     clock_provider,
     portfolio_provider,
     cycle_runner,
+    exit_runner=None,
     interval_seconds: int = DEFAULT_INTERVAL_SECONDS,
     maximum_open_spreads: int = DEFAULT_MAXIMUM_OPEN_SPREADS,
     maximum_daily_loss: Decimal = DEFAULT_MAXIMUM_DAILY_LOSS,
@@ -170,6 +183,129 @@ def run_autonomous_paper_session(
 
         market_has_opened = True
 
+        if exit_runner is not None:
+            try:
+                exit_result = exit_runner(
+                    snapshot
+                )
+            except Exception as error:
+                last_status = "EXIT_ERROR"
+                last_reason = (
+                    "position_exit_cycle_failed_closed"
+                )
+                output_fn(
+                    (
+                        "POSITION EXIT CHECK: ERROR | "
+                        f"{type(error).__name__}"
+                    )
+                )
+                output_fn(
+                    "FAIL CLOSED: no new entry while exit state is unavailable"
+                )
+
+                if (
+                    max_iterations is not None
+                    and iterations >= max_iterations
+                ):
+                    return AutonomousSessionSummary(
+                        iterations=iterations,
+                        trade_cycles=trade_cycles,
+                        last_status=last_status,
+                        last_reason=last_reason,
+                    )
+
+                output_fn(
+                    (
+                        "NEXT AUTONOMOUS CHECK IN "
+                        f"{interval_seconds} SECONDS"
+                    )
+                )
+                sleep_fn(interval_seconds)
+                continue
+
+            if exit_result.submitted:
+                last_status = "EXIT_SUBMITTED"
+                last_reason = exit_result.reason
+
+                return_text = ""
+                if (
+                    exit_result.expected_return_percent
+                    is not None
+                ):
+                    return_text = (
+                        " | executable_return="
+                        f"{exit_result.expected_return_percent:.2f}%"
+                    )
+
+                output_fn(
+                    (
+                        "POSITION EXIT: SUBMITTED | "
+                        f"{exit_result.reason}"
+                        f"{return_text}"
+                    )
+                )
+
+                if (
+                    exit_result.broker_order_id
+                    is not None
+                ):
+                    output_fn(
+                        (
+                            "ALPACA EXIT ORDER ID: "
+                            f"{exit_result.broker_order_id}"
+                        )
+                    )
+
+                if (
+                    max_iterations is not None
+                    and iterations >= max_iterations
+                ):
+                    return AutonomousSessionSummary(
+                        iterations=iterations,
+                        trade_cycles=trade_cycles,
+                        last_status=last_status,
+                        last_reason=last_reason,
+                    )
+
+                output_fn(
+                    (
+                        "NEXT AUTONOMOUS CHECK IN "
+                        f"{interval_seconds} SECONDS"
+                    )
+                )
+                sleep_fn(interval_seconds)
+                continue
+
+            if exit_result.block_new_entries:
+                last_status = "ENTRY_BLOCKED"
+                last_reason = exit_result.reason
+                output_fn(
+                    (
+                        "POSITION EXIT CHECK: BLOCKING NEW ENTRY | "
+                        f"{exit_result.reason}"
+                    )
+                )
+
+                if (
+                    max_iterations is not None
+                    and iterations >= max_iterations
+                ):
+                    return AutonomousSessionSummary(
+                        iterations=iterations,
+                        trade_cycles=trade_cycles,
+                        last_status=last_status,
+                        last_reason=last_reason,
+                    )
+
+                output_fn(
+                    (
+                        "NEXT AUTONOMOUS CHECK IN "
+                        f"{interval_seconds} SECONDS"
+                    )
+                )
+                sleep_fn(interval_seconds)
+                continue
+
         entry_decision = evaluate_portfolio_entry(
             snapshot=snapshot,
             maximum_open_spreads=(
@@ -299,6 +435,38 @@ def main(argv=None) -> int:
         type=Decimal,
         default=COMPETITION_STARTING_EQUITY,
     )
+    parser.add_argument(
+        "--activity-mode",
+        choices=(
+            "balanced",
+            "active_paper",
+        ),
+        default="active_paper",
+        help=(
+            "active_paper encourages bounded paper "
+            "trading without weakening Lockean limits."
+        ),
+    )
+    parser.add_argument(
+        "--take-profit-percent",
+        type=Decimal,
+        default=DEFAULT_TAKE_PROFIT_PERCENT,
+        help=(
+            "Close a managed spread when executable "
+            "credit implies at least this percentage "
+            "return on the entry debit."
+        ),
+    )
+    parser.add_argument(
+        "--stop-loss-percent",
+        type=Decimal,
+        default=DEFAULT_STOP_LOSS_PERCENT,
+        help=(
+            "Close a managed spread when executable "
+            "credit implies a loss at or beyond this "
+            "percentage of the entry debit."
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -318,6 +486,17 @@ def main(argv=None) -> int:
         create_paper_trading_client_from_environment()
     )
 
+    credentials = (
+        load_alpaca_credentials_from_environment()
+    )
+
+    option_data_client = (
+        OptionHistoricalDataClient(
+            credentials.api_key,
+            credentials.secret_key,
+        )
+    )
+
     def clock_provider():
         return trading_client.get_clock()
 
@@ -325,6 +504,21 @@ def main(argv=None) -> int:
         return read_live_paper_portfolio_snapshot(
             trading_client=trading_client,
             starting_equity=args.starting_equity,
+        )
+
+    def exit_runner(snapshot):
+        return run_paper_spread_exit_cycle(
+            trading_client=trading_client,
+            option_data_client=(
+                option_data_client
+            ),
+            snapshot=snapshot,
+            take_profit_percent=(
+                args.take_profit_percent
+            ),
+            stop_loss_percent=(
+                args.stop_loss_percent
+            ),
         )
 
     def cycle_runner():
@@ -339,12 +533,16 @@ def main(argv=None) -> int:
             authorization_signing_key=(
                 signing_key
             ),
+            agent_activity_mode=(
+                args.activity_mode
+            ),
         )
 
     run_autonomous_paper_session(
         clock_provider=clock_provider,
         portfolio_provider=portfolio_provider,
         cycle_runner=cycle_runner,
+        exit_runner=exit_runner,
         interval_seconds=args.interval_seconds,
         maximum_open_spreads=(
             args.maximum_open_spreads
