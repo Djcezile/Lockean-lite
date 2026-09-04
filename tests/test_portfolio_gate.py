@@ -13,6 +13,7 @@ def _snapshot(**overrides):
         "options_buying_power": Decimal("100000"),
         "day_pl": Decimal("0"),
         "managed_spreads": 0,
+        "pending_spread_units": 0,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -37,6 +38,32 @@ def test_portfolio_gate_blocks_fifth_limit_from_becoming_sixth():
 
     assert result.allowed is False
     assert result.reason == "portfolio_spread_limit_reached"
+
+
+def test_portfolio_gate_counts_pending_orders_against_five_spread_cap():
+    result = evaluate_portfolio_entry(
+        snapshot=_snapshot(
+            managed_spreads=3,
+            pending_spread_units=2,
+        ),
+        maximum_open_spreads=5,
+    )
+
+    assert result.allowed is False
+    assert result.reason == "portfolio_spread_limit_reached"
+
+
+def test_portfolio_gate_allows_when_filled_and_pending_total_is_below_cap():
+    result = evaluate_portfolio_entry(
+        snapshot=_snapshot(
+            managed_spreads=2,
+            pending_spread_units=2,
+        ),
+        maximum_open_spreads=5,
+    )
+
+    assert result.allowed is True
+    assert result.reason == "portfolio_entry_allowed"
 
 
 def test_portfolio_gate_blocks_after_daily_loss_limit():
