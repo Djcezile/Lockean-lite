@@ -130,3 +130,48 @@ def build_authorized_mleg_limit_order(
         order_class=OrderClass.MLEG,
         legs=option_legs,
     )
+
+
+def build_managed_spread_close_order(
+    *,
+    long_symbol: str,
+    short_symbol: str,
+    contracts: int,
+    limit_credit: Decimal,
+) -> LimitOrderRequest:
+    if contracts <= 0:
+        raise ValueError(
+            "invalid_close_contract_quantity"
+        )
+
+    if limit_credit <= 0:
+        raise ValueError(
+            "invalid_close_limit_credit"
+        )
+
+    return LimitOrderRequest(
+        qty=contracts,
+        # Alpaca represents an MLEG net credit with a
+        # negative parent limit price.
+        limit_price=float(-limit_credit),
+        time_in_force=TimeInForce.DAY,
+        order_class=OrderClass.MLEG,
+        legs=[
+            OptionLegRequest(
+                symbol=long_symbol,
+                ratio_qty=1,
+                side=OrderSide.SELL,
+                position_intent=(
+                    PositionIntent.SELL_TO_CLOSE
+                ),
+            ),
+            OptionLegRequest(
+                symbol=short_symbol,
+                ratio_qty=1,
+                side=OrderSide.BUY,
+                position_intent=(
+                    PositionIntent.BUY_TO_CLOSE
+                ),
+            ),
+        ],
+    )
