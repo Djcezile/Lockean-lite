@@ -29,6 +29,9 @@ from lockean_lite.position_exit_manager import (
 from lockean_lite.production_runtime import (
     run_live_production_autonomous_cycle,
 )
+from lockean_lite.safe_error_reporting import (
+    safe_exception_reason,
+)
 
 
 DEFAULT_INTERVAL_SECONDS = 300
@@ -332,11 +335,14 @@ def run_autonomous_paper_session(
                 cycle_result = cycle_runner()
             except Exception as error:
                 last_status = "CYCLE_ERROR"
-                last_reason = "autonomous_cycle_failed_closed"
+                last_reason = safe_exception_reason(
+                    error
+                )
                 output_fn(
                     (
                         "AUTONOMOUS CYCLE: ERROR | "
-                        f"{type(error).__name__}"
+                        f"{type(error).__name__} | "
+                        f"{last_reason}"
                     )
                 )
                 output_fn(
