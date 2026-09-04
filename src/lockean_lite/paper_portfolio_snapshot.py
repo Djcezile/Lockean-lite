@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_CEILING
 
+from alpaca.trading.enums import QueryOrderStatus
+from alpaca.trading.requests import GetOrdersRequest
+
 
 COMPETITION_STARTING_EQUITY = Decimal("100000.00")
 
@@ -35,6 +38,7 @@ class PaperPortfolioSnapshot:
     positions: tuple[PaperPositionSnapshot, ...]
     option_contract_units: Decimal
     managed_spreads: int
+    pending_spread_units: int = 0
 
 
 def _decimal(value) -> Decimal:
@@ -56,10 +60,41 @@ def _is_option_asset_class(asset_class: str) -> bool:
     return "option" in asset_class.lower()
 
 
+def _pending_mleg_units(open_orders) -> int:
+    units = Decimal("0")
+
+    for order in open_orders:
+        order_class = _enum_text(
+            getattr(order, "order_class", "")
+        ).lower()
+
+        if order_class != "mleg":
+            continue
+
+        qty = abs(
+            _decimal(getattr(order, "qty", 0))
+        )
+        filled_qty = abs(
+            _decimal(getattr(order, "filled_qty", 0))
+        )
+        remaining = max(
+            qty - filled_qty,
+            Decimal("0"),
+        )
+        units += remaining
+
+    return int(
+        units.to_integral_value(
+            rounding=ROUND_CEILING
+        )
+    )
+
+
 def create_paper_portfolio_snapshot(
     *,
     account,
     positions,
+    open_orders=(),
     starting_equity: Decimal = COMPETITION_STARTING_EQUITY,
 ) -> PaperPortfolioSnapshot:
     position_snapshots = tuple(
@@ -106,6 +141,10 @@ def create_paper_portfolio_snapshot(
         ).to_integral_value(
             rounding=ROUND_CEILING
         )
+    )
+
+    pending_spread_units = (
+        _pending_mleg_units(open_orders)
     )
 
     equity = _decimal(
@@ -160,6 +199,9 @@ def create_paper_portfolio_snapshot(
             option_contract_units
         ),
         managed_spreads=managed_spreads,
+        pending_spread_units=(
+            pending_spread_units
+        ),
     )
 
 
@@ -170,10 +212,18 @@ def read_live_paper_portfolio_snapshot(
 ) -> PaperPortfolioSnapshot:
     account = trading_client.get_account()
     positions = trading_client.get_all_positions()
+    open_orders = trading_client.get_orders(
+        filter=GetOrdersRequest(
+            status=QueryOrderStatus.OPEN,
+            limit=100,
+            nested=True,
+        )
+    )
 
     return create_paper_portfolio_snapshot(
         account=account,
         positions=positions,
+        open_orders=open_orders,
         starting_equity=starting_equity,
     )
 
@@ -185,6 +235,11 @@ def _money(value: Decimal) -> str:
 def render_paper_portfolio_snapshot(
     snapshot: PaperPortfolioSnapshot,
 ) -> str:
+    committed_spreads = (
+        snapshot.managed_spreads
+        + snapshot.pending_spread_units
+    )
+
     lines = [
         "LOCKEAN ALPACA PAPER TELEMETRY",
         "==============================",
@@ -204,6 +259,14 @@ def render_paper_portfolio_snapshot(
         (
             "MANAGED SPREAD UNITS: "
             f"{snapshot.managed_spreads}"
+        ),
+        (
+            "PENDING SPREAD UNITS: "
+            f"{snapshot.pending_spread_units}"
+        ),
+        (
+            "COMMITTED SPREAD UNITS: "
+            f"{committed_spreads}"
         ),
     ]
 
