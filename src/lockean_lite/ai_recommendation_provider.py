@@ -32,6 +32,13 @@ NO_TRADE_RESPONSE_FIELDS = frozenset(
     }
 )
 
+SUPPORTED_ACTIVITY_MODES = frozenset(
+    {
+        "balanced",
+        "active_paper",
+    }
+)
+
 
 def build_recommendation_prompt(
     *,
@@ -42,7 +49,13 @@ def build_recommendation_prompt(
     ],
     maximum_allowed_loss: Decimal | None = None,
     market_context: dict[str, str] | None = None,
+    activity_mode: str = "balanced",
 ) -> str:
+    if activity_mode not in SUPPORTED_ACTIVITY_MODES:
+        raise ValueError(
+            "unsupported_agent_activity_mode"
+        )
+
     candidate_lines = []
 
     for quote in candidate_quotes:
@@ -61,6 +74,16 @@ def build_recommendation_prompt(
 
     policy_context = ""
 
+    if maximum_allowed_loss is not None:
+        policy_context = (
+            "\nLOCKEAN POLICY CONTEXT:\n"
+            "maximum_allowed_loss_usd="
+            f"{maximum_allowed_loss}\n"
+            "Use this only to improve your recommendation. "
+            "Lockean independently determines pricing, risk, "
+            "compliance, and permission.\n"
+        )
+
     market_context_text = ""
 
     if market_context is not None:
@@ -75,72 +98,97 @@ def build_recommendation_prompt(
             + "\n"
         )
 
-    if maximum_allowed_loss is not None:
-        policy_context = (
-        "\nLOCKEAN POLICY CONTEXT:\n"
-        f"maximum_allowed_loss_usd="
-        f"{maximum_allowed_loss}\n"
-        "Use this only to improve your recommendation. "
-        "Lockean independently determines pricing, risk, "
-        "compliance, and authorization.\n"
-    )
+    activity_context = ""
+
+    if activity_mode == "active_paper":
+        activity_context = (
+            "\nACTIVE PAPER MODE:\n"
+            "This is an Alpaca PAPER account. The goal is to "
+            "exercise the complete autonomous trading loop and "
+            "collect realistic paper performance data while all "
+            "Lockean limits remain unchanged.\n"
+            "Prefer decision=TRADE when at least one candidate "
+            "pair forms a sensible defined-risk bull call spread, "
+            "its quoted debit appears likely to fit the supplied "
+            "maximum-loss context, and the market context is not "
+            "strongly adverse.\n"
+            "Treat individual PASS/FAIL market signals as context, "
+            "not independent hard vetoes. A single FAIL does not "
+            "by itself require NO_TRADE.\n"
+            "Favor reasonably tight, liquid-looking candidate "
+            "spreads and narrower strike widths when several "
+            "choices are comparable.\n"
+            "Use decision=NO_TRADE when the candidates are clearly "
+            "poor, structurally unsuitable, or the combined market "
+            "evidence is materially adverse.\n"
+            "You still have no permission or broker authority. "
+            "Lockean independently reconstructs pricing and risk "
+            "and may reject any proposal.\n"
+        )
 
     return (
-    "You are the trading agent.\n\n"
-    "You decide whether the market opportunity "
-    "justifies a trade.\n\n"
-    "If you want to propose a defined-risk SPY bull "
-    "call spread using the candidate options below, "
-    "set decision=TRADE.\n"
-    "If you do not want to trade, "
-    "set decision=NO_TRADE.\n\n"
-    "Return JSON only with exactly these fields:\n"
-    "decision\n"
-    "symbol\n"
-    "expiration\n"
-    "buy_strike\n"
-    "sell_strike\n"
-    "contracts\n\n"
-    "For decision=NO_TRADE, symbol, expiration, "
-    "buy_strike, sell_strike, and contracts "
-    "must all be null.\n"
-    "For decision=TRADE, populate those fields using "
-    "only the candidate options below.\n\n"
-    "Do not return pricing, risk calculations, "
-    "authorization decisions, or broker instructions.\n"
-    f"{policy_context}\n"
-    f"{market_context_text}\n"
-    f"proposal_reference={proposal_id}\n\n"
-    "CANDIDATES:\n"
-    f"{candidate_text}"
-)
+        "You are the trading agent.\n\n"
+        "You decide whether the market opportunity "
+        "justifies a trade.\n\n"
+        "If you want to propose a defined-risk SPY bull "
+        "call spread using the candidate options below, "
+        "set decision=TRADE.\n"
+        "If you do not want to trade, "
+        "set decision=NO_TRADE.\n\n"
+        "Return JSON only with exactly these fields:\n"
+        "decision\n"
+        "symbol\n"
+        "expiration\n"
+        "buy_strike\n"
+        "sell_strike\n"
+        "contracts\n\n"
+        "For decision=NO_TRADE, symbol, expiration, "
+        "buy_strike, sell_strike, and contracts "
+        "must all be null.\n"
+        "For decision=TRADE, populate those fields using "
+        "only the candidate options below.\n\n"
+        "Do not return pricing, risk calculations, "
+        "permission decisions, or broker instructions.\n"
+        f"{policy_context}"
+        f"{market_context_text}"
+        f"{activity_context}\n"
+        f"proposal_reference={proposal_id}\n\n"
+        "CANDIDATES:\n"
+        f"{candidate_text}"
+    )
 
 
 class StructuredAIRecommendationProvider:
     def __init__(
-    self,
-    *,
-    proposal_id_provider,
-    model_callable,
-    maximum_allowed_loss: Decimal | None = None,
-):
+        self,
+        *,
+        proposal_id_provider,
+        model_callable,
+        maximum_allowed_loss: Decimal | None = None,
+        activity_mode: str = "balanced",
+    ):
+        if activity_mode not in SUPPORTED_ACTIVITY_MODES:
+            raise ValueError(
+                "unsupported_agent_activity_mode"
+            )
+
         self.maximum_allowed_loss = (
             maximum_allowed_loss
         )
         self.proposal_id_provider = (
             proposal_id_provider
         )
-
         self.model_callable = model_callable
+        self.activity_mode = activity_mode
 
     def __call__(
-    self,
-    candidate_quotes: tuple[
-        OptionQuoteSnapshot,
-        ...,
-    ],
-    market_context: dict[str, str] | None = None,
-) -> SpreadRecommendation | None:
+        self,
+        candidate_quotes: tuple[
+            OptionQuoteSnapshot,
+            ...,
+        ],
+        market_context: dict[str, str] | None = None,
+    ) -> SpreadRecommendation | None:
         proposal_id = (
             self.proposal_id_provider()
         )
@@ -152,6 +200,7 @@ class StructuredAIRecommendationProvider:
                 self.maximum_allowed_loss
             ),
             market_context=market_context,
+            activity_mode=self.activity_mode,
         )
 
         raw_response = self.model_callable(
@@ -170,7 +219,6 @@ class StructuredAIRecommendationProvider:
                 "ai_recommendation_invalid_json"
             ) from error
 
-
         if (
             isinstance(parsed, dict)
             and frozenset(parsed.keys())
@@ -185,7 +233,7 @@ class StructuredAIRecommendationProvider:
                     "buy_strike",
                     "sell_strike",
                     "contracts",
-                 )
+                )
 
                 if not all(
                     parsed[field] is None
@@ -193,7 +241,7 @@ class StructuredAIRecommendationProvider:
                 ):
                     raise ValueError(
                         "ai_recommendation_schema_invalid"
-        )
+                    )
 
                 return None
 
@@ -207,7 +255,6 @@ class StructuredAIRecommendationProvider:
                 raise ValueError(
                     "ai_recommendation_schema_invalid"
                 )
-
 
         if (
             not isinstance(parsed, dict)
