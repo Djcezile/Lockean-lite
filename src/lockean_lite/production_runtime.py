@@ -11,8 +11,8 @@ from alpaca.data.historical import (
 from lockean_lite.ai_recommendation_provider import (
     StructuredAIRecommendationProvider,
 )
-from lockean_lite.alpaca_cli_account_reader import (
-    read_paper_account_snapshot_from_cli,
+from lockean_lite.alpaca_account_reader import (
+    read_paper_account_snapshot_from_environment,
 )
 from lockean_lite.alpaca_client_factory import (
     create_paper_trading_client_from_environment,
@@ -232,7 +232,7 @@ def run_production_autonomous_cycle(
             recommendation_provider
         ),
         account_snapshot_provider=(
-            read_paper_account_snapshot_from_cli
+            read_paper_account_snapshot_from_environment
         ),
         authority=authority,
         execution_gateway=(
