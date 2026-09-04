@@ -60,6 +60,7 @@ def run_live_production_autonomous_cycle(
     maximum_allowed_loss: Decimal,
     authorization_signing_key: bytes,
     proposal_id_provider=None,
+    agent_activity_mode: str = "balanced",
 ):
     if not authorization_signing_key:
         raise ValueError(
@@ -105,6 +106,9 @@ def run_live_production_autonomous_cycle(
         proposal_id_provider=(
             proposal_id_provider
         ),
+        agent_activity_mode=(
+            agent_activity_mode
+        ),
     )
 
 
@@ -117,6 +121,7 @@ def run_production_autonomous_cycle(
     authorization_signing_key: bytes,
     proposal_id_provider=None,
     strike_window: Decimal = DEFAULT_STRIKE_WINDOW,
+    agent_activity_mode: str = "balanced",
 ):
     if not authorization_signing_key:
         raise ValueError(
@@ -143,15 +148,26 @@ def run_production_autonomous_cycle(
         create_openai_recommendation_model()
     )
 
+    provider_kwargs = {
+        "proposal_id_provider": (
+            proposal_id_provider
+        ),
+        "model_callable": model,
+        "maximum_allowed_loss": (
+            maximum_allowed_loss
+        ),
+    }
+
+    # Preserve the legacy balanced constructor shape for
+    # existing integrations; active mode is opt-in.
+    if agent_activity_mode != "balanced":
+        provider_kwargs["activity_mode"] = (
+            agent_activity_mode
+        )
+
     recommendation_provider = (
         StructuredAIRecommendationProvider(
-            proposal_id_provider=(
-                proposal_id_provider
-            ),
-            model_callable=model,
-            maximum_allowed_loss=(
-                maximum_allowed_loss
-            ),
+            **provider_kwargs
         )
     )
 
