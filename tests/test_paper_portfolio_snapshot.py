@@ -44,6 +44,21 @@ def _position(
     )
 
 
+def _order(
+    qty,
+    *,
+    filled_qty="0",
+    order_class="mleg",
+):
+    return SimpleNamespace(
+        qty=str(qty),
+        filled_qty=str(filled_qty),
+        order_class=SimpleNamespace(
+            value=order_class
+        ),
+    )
+
+
 def test_portfolio_snapshot_uses_live_account_values_for_pnl():
     snapshot = create_paper_portfolio_snapshot(
         account=_account(),
@@ -82,10 +97,27 @@ def test_portfolio_snapshot_conservatively_counts_odd_option_leg_quantity():
     assert snapshot.managed_spreads == 1
 
 
+def test_portfolio_snapshot_counts_unfilled_mleg_orders_as_pending_spreads():
+    snapshot = create_paper_portfolio_snapshot(
+        account=_account(),
+        positions=(),
+        open_orders=(
+            _order(2),
+            _order(3, filled_qty="1"),
+            _order(10, order_class="simple"),
+        ),
+    )
+
+    assert snapshot.pending_spread_units == 4
+
+
 def test_rendered_portfolio_telemetry_surfaces_alpaca_equity_and_pnl():
     snapshot = create_paper_portfolio_snapshot(
         account=_account(),
         positions=[],
+        open_orders=(
+            _order(1),
+        ),
     )
 
     output = render_paper_portfolio_snapshot(snapshot)
@@ -93,3 +125,5 @@ def test_rendered_portfolio_telemetry_surfaces_alpaca_equity_and_pnl():
     assert "CURRENT EQUITY:  $100,125.50" in output
     assert "TOTAL P&L:       $125.50" in output
     assert "DAY P&L:         $75.50" in output
+    assert "PENDING SPREAD UNITS: 1" in output
+    assert "COMMITTED SPREAD UNITS: 1" in output
