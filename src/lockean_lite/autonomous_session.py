@@ -80,9 +80,40 @@ def run_autonomous_paper_session(
     )
 
     while True:
-        clock = clock_provider()
-        snapshot = portfolio_provider()
         iterations += 1
+
+        try:
+            clock = clock_provider()
+            snapshot = portfolio_provider()
+        except Exception as error:
+            last_status = "STATE_UNAVAILABLE"
+            last_reason = "alpaca_session_state_unavailable"
+            output_fn("")
+            output_fn(
+                (
+                    "ALPACA SESSION STATE: UNAVAILABLE | "
+                    f"{type(error).__name__}"
+                )
+            )
+            output_fn(
+                "FAIL CLOSED: no autonomous order attempt"
+            )
+
+            if (
+                max_iterations is not None
+                and iterations >= max_iterations
+            ):
+                return AutonomousSessionSummary(
+                    iterations=iterations,
+                    trade_cycles=trade_cycles,
+                    last_status=last_status,
+                    last_reason=last_reason,
+                )
+
+            sleep_fn(
+                min(interval_seconds, 60)
+            )
+            continue
 
         output_fn("")
         output_fn(
@@ -159,30 +190,45 @@ def run_autonomous_paper_session(
                 )
             )
         else:
-            cycle_result = cycle_runner()
             trade_cycles += 1
-            last_status = cycle_result.status
-            last_reason = cycle_result.reason
-            output_fn(
-                (
-                    "AUTONOMOUS CYCLE: "
-                    f"{cycle_result.status} | "
-                    f"{cycle_result.reason}"
-                )
-            )
 
-            execution_proof = getattr(
-                cycle_result,
-                "execution_proof",
-                None,
-            )
-            if execution_proof is not None:
+            try:
+                cycle_result = cycle_runner()
+            except Exception as error:
+                last_status = "CYCLE_ERROR"
+                last_reason = "autonomous_cycle_failed_closed"
                 output_fn(
                     (
-                        "ALPACA BROKER ORDER ID: "
-                        f"{execution_proof.broker_order_id}"
+                        "AUTONOMOUS CYCLE: ERROR | "
+                        f"{type(error).__name__}"
                     )
                 )
+                output_fn(
+                    "FAIL CLOSED: reconcile Alpaca state on next iteration"
+                )
+            else:
+                last_status = cycle_result.status
+                last_reason = cycle_result.reason
+                output_fn(
+                    (
+                        "AUTONOMOUS CYCLE: "
+                        f"{cycle_result.status} | "
+                        f"{cycle_result.reason}"
+                    )
+                )
+
+                execution_proof = getattr(
+                    cycle_result,
+                    "execution_proof",
+                    None,
+                )
+                if execution_proof is not None:
+                    output_fn(
+                        (
+                            "ALPACA BROKER ORDER ID: "
+                            f"{execution_proof.broker_order_id}"
+                        )
+                    )
 
         if (
             max_iterations is not None
