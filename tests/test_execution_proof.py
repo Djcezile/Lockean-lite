@@ -227,18 +227,18 @@ def test_autonomous_cycle_propagates_execution_proof(
     )
 
     monkeypatch.setattr(
-    "lockean_lite.autonomous_cycle.build_agent_market_context",
-    lambda *,
-    spy_evidence,
-    vix_evidence: {
-        "spy_close": "765",
-        "trend": "PASS",
-        "momentum": "PASS",
-        "breakout": "PASS",
-        "vix_close": "15",
-        "volatility": "PASS",
-    },
-)
+        "lockean_lite.autonomous_cycle.build_agent_market_context",
+        lambda *,
+        spy_evidence,
+        vix_evidence: {
+            "spy_close": "765",
+            "trend": "PASS",
+            "momentum": "PASS",
+            "breakout": "PASS",
+            "vix_close": "15",
+            "volatility": "PASS",
+        },
+    )
 
     monkeypatch.setattr(
         "lockean_lite.autonomous_cycle.build_trade_proposal_from_recommendation",
@@ -265,27 +265,29 @@ def test_autonomous_cycle_propagates_execution_proof(
 
     result = run_autonomous_trade_cycle(
         spy_evidence=SimpleNamespace(
-    bars=(
-        SimpleNamespace(
-            close=Decimal("765.13"),
+            bars=(
+                SimpleNamespace(
+                    close=Decimal("765.13"),
+                ),
+            ),
         ),
-    ),
-),
-vix_evidence=SimpleNamespace(
-    bars=(
-        SimpleNamespace(
-            close=Decimal("15.20"),
+        vix_evidence=SimpleNamespace(
+            bars=(
+                SimpleNamespace(
+                    close=Decimal("15.20"),
+                ),
+            ),
         ),
-    ),
-),
         candidate_quotes_provider=(
             lambda: ("candidate",)
         ),
         recommendation_provider=(
-    lambda candidates, *, market_context: (
-        "recommendation"
-    )
-),
+            lambda candidates, *, market_context: (
+                SimpleNamespace(
+                    contracts=1,
+                )
+            )
+        ),
         account_snapshot_provider=(
             lambda: object()
         ),
