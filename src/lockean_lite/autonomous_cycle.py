@@ -39,7 +39,6 @@ def run_autonomous_trade_cycle(
         vix_evidence=vix_evidence,
     )
 
-
     candidate_quotes = (
         candidate_quotes_provider()
     )
@@ -53,6 +52,15 @@ def run_autonomous_trade_cycle(
         return AutonomousTradeCycleResult(
             status="NO_TRADE",
             reason="agent_declined_trade",
+        )
+
+    # Session portfolio capacity is counted in spread units. One autonomous
+    # decision may consume exactly one unit so a single recommendation cannot
+    # leap past the five-spread portfolio cap before the next Alpaca refresh.
+    if recommendation.contracts != 1:
+        return AutonomousTradeCycleResult(
+            status="REJECTED",
+            reason="autonomous_contract_quantity_must_be_one",
         )
 
     try:
