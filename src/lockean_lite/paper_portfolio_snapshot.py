@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, ROUND_CEILING
 
 from alpaca.trading.enums import QueryOrderStatus
@@ -21,6 +22,15 @@ class PaperPositionSnapshot:
 
 
 @dataclass(frozen=True)
+class PendingMlegOrderSnapshot:
+    order_id: str
+    remaining_units: int
+    purpose: str
+    submitted_at: datetime | None
+    symbols: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class PaperPortfolioSnapshot:
     status: str
     currency: str
@@ -39,6 +49,10 @@ class PaperPortfolioSnapshot:
     option_contract_units: Decimal
     managed_spreads: int
     pending_spread_units: int = 0
+    pending_entry_spread_units: int = 0
+    pending_exit_spread_units: int = 0
+    pending_unknown_spread_units: int = 0
+    pending_mleg_orders: tuple[PendingMlegOrderSnapshot, ...] = ()
 
 
 def _decimal(value) -> Decimal:
@@ -60,8 +74,37 @@ def _is_option_asset_class(asset_class: str) -> bool:
     return "option" in asset_class.lower()
 
 
-def _pending_mleg_units(open_orders) -> int:
-    units = Decimal("0")
+def _order_purpose(order) -> tuple[str, tuple[str, ...]]:
+    legs = tuple(getattr(order, "legs", ()) or ())
+    intents = tuple(
+        _enum_text(
+            getattr(leg, "position_intent", "")
+        ).lower()
+        for leg in legs
+    )
+    symbols = tuple(
+        str(getattr(leg, "symbol", ""))
+        for leg in legs
+        if getattr(leg, "symbol", None)
+    )
+
+    if intents and all(
+        "to_close" in intent
+        for intent in intents
+    ):
+        return "exit", symbols
+
+    if intents and all(
+        "to_open" in intent
+        for intent in intents
+    ):
+        return "entry", symbols
+
+    return "unknown", symbols
+
+
+def _pending_mleg_orders(open_orders) -> tuple[PendingMlegOrderSnapshot, ...]:
+    pending_orders: list[PendingMlegOrderSnapshot] = []
 
     for order in open_orders:
         order_class = _enum_text(
@@ -81,13 +124,41 @@ def _pending_mleg_units(open_orders) -> int:
             qty - filled_qty,
             Decimal("0"),
         )
-        units += remaining
 
-    return int(
-        units.to_integral_value(
-            rounding=ROUND_CEILING
+        if remaining <= 0:
+            continue
+
+        remaining_units = int(
+            remaining.to_integral_value(
+                rounding=ROUND_CEILING
+            )
         )
-    )
+        purpose, symbols = _order_purpose(order)
+        submitted_at = getattr(
+            order,
+            "submitted_at",
+            None,
+        )
+        if not isinstance(submitted_at, datetime):
+            submitted_at = None
+
+        order_id = getattr(order, "id", None)
+
+        pending_orders.append(
+            PendingMlegOrderSnapshot(
+                order_id=(
+                    str(order_id)
+                    if order_id is not None
+                    else ""
+                ),
+                remaining_units=remaining_units,
+                purpose=purpose,
+                submitted_at=submitted_at,
+                symbols=symbols,
+            )
+        )
+
+    return tuple(pending_orders)
 
 
 def create_paper_portfolio_snapshot(
@@ -143,8 +214,27 @@ def create_paper_portfolio_snapshot(
         )
     )
 
-    pending_spread_units = (
-        _pending_mleg_units(open_orders)
+    pending_mleg_orders = (
+        _pending_mleg_orders(open_orders)
+    )
+    pending_entry_spread_units = sum(
+        order.remaining_units
+        for order in pending_mleg_orders
+        if order.purpose == "entry"
+    )
+    pending_exit_spread_units = sum(
+        order.remaining_units
+        for order in pending_mleg_orders
+        if order.purpose == "exit"
+    )
+    pending_unknown_spread_units = sum(
+        order.remaining_units
+        for order in pending_mleg_orders
+        if order.purpose == "unknown"
+    )
+    pending_spread_units = sum(
+        order.remaining_units
+        for order in pending_mleg_orders
     )
 
     equity = _decimal(
@@ -202,6 +292,18 @@ def create_paper_portfolio_snapshot(
         pending_spread_units=(
             pending_spread_units
         ),
+        pending_entry_spread_units=(
+            pending_entry_spread_units
+        ),
+        pending_exit_spread_units=(
+            pending_exit_spread_units
+        ),
+        pending_unknown_spread_units=(
+            pending_unknown_spread_units
+        ),
+        pending_mleg_orders=(
+            pending_mleg_orders
+        ),
     )
 
 
@@ -235,9 +337,41 @@ def _money(value: Decimal) -> str:
 def render_paper_portfolio_snapshot(
     snapshot: PaperPortfolioSnapshot,
 ) -> str:
+    pending_entry_units = int(
+        getattr(
+            snapshot,
+            "pending_entry_spread_units",
+            0,
+        )
+    )
+    pending_exit_units = int(
+        getattr(
+            snapshot,
+            "pending_exit_spread_units",
+            0,
+        )
+    )
+    pending_unknown_units = int(
+        getattr(
+            snapshot,
+            "pending_unknown_spread_units",
+            0,
+        )
+    )
+
+    if not getattr(snapshot, "pending_mleg_orders", ()):
+        pending_entry_units = int(
+            getattr(
+                snapshot,
+                "pending_spread_units",
+                0,
+            )
+        )
+
     committed_spreads = (
         snapshot.managed_spreads
-        + snapshot.pending_spread_units
+        + pending_entry_units
+        + pending_unknown_units
     )
 
     lines = [
@@ -261,8 +395,16 @@ def render_paper_portfolio_snapshot(
             f"{snapshot.managed_spreads}"
         ),
         (
-            "PENDING SPREAD UNITS: "
-            f"{snapshot.pending_spread_units}"
+            "PENDING ENTRY SPREAD UNITS: "
+            f"{pending_entry_units}"
+        ),
+        (
+            "PENDING EXIT SPREAD UNITS: "
+            f"{pending_exit_units}"
+        ),
+        (
+            "PENDING UNKNOWN SPREAD UNITS: "
+            f"{pending_unknown_units}"
         ),
         (
             "COMMITTED SPREAD UNITS: "
