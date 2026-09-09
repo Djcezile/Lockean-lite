@@ -47,24 +47,45 @@ class PaperSpreadExitResult:
 def _parse_call_contract(
     symbol: str,
 ) -> tuple[str, str, Decimal] | None:
-    match = _OCC_CALL_PATTERN.fullmatch(
-        symbol
-    )
+    match = _OCC_CALL_PATTERN.fullmatch(symbol)
 
     if match is None:
         return None
 
     underlying = match.group(1)
     expiration_code = match.group(2)
-    strike = (
-        Decimal(match.group(3))
-        / Decimal("1000")
-    )
+    strike = Decimal(match.group(3)) / Decimal("1000")
+
+    return underlying, expiration_code, strike
+
+
+def _integral_contract_quantity(
+    position: PaperPositionSnapshot,
+) -> int | None:
+    quantity = abs(position.qty)
+
+    if quantity <= 0:
+        return None
+
+    if quantity != quantity.to_integral_value():
+        return None
+
+    return int(quantity)
+
+
+def _allocated_cost_basis(
+    *,
+    position: PaperPositionSnapshot,
+    contracts: int,
+) -> Decimal:
+    total_contracts = _integral_contract_quantity(position)
+    if total_contracts is None:
+        raise ValueError("spread_position_quantity_invalid")
 
     return (
-        underlying,
-        expiration_code,
-        strike,
+        abs(position.cost_basis)
+        * Decimal(contracts)
+        / Decimal(total_contracts)
     )
 
 
@@ -72,34 +93,22 @@ def identify_managed_bull_call_spreads(
     snapshot: PaperPortfolioSnapshot,
 ) -> tuple[ManagedBullCallSpread, ...]:
     long_positions: list[
-        tuple[
-            PaperPositionSnapshot,
-            str,
-            str,
-            Decimal,
-        ]
+        tuple[PaperPositionSnapshot, str, str, Decimal]
     ] = []
     short_positions: list[
-        tuple[
-            PaperPositionSnapshot,
-            str,
-            str,
-            Decimal,
-        ]
+        tuple[PaperPositionSnapshot, str, str, Decimal]
     ] = []
 
     for position in snapshot.positions:
-        parsed = _parse_call_contract(
-            position.symbol
-        )
+        parsed = _parse_call_contract(position.symbol)
 
         if parsed is None:
             continue
 
-        underlying, expiration_code, strike = (
-            parsed
-        )
+        if _integral_contract_quantity(position) is None:
+            continue
 
+        underlying, expiration_code, strike = parsed
         item = (
             position,
             underlying,
@@ -113,21 +122,22 @@ def identify_managed_bull_call_spreads(
             short_positions.append(item)
 
     long_positions.sort(
-        key=lambda item: (
-            item[1],
-            item[2],
-            item[3],
-        )
+        key=lambda item: (item[1], item[2], item[3])
     )
     short_positions.sort(
-        key=lambda item: (
-            item[1],
-            item[2],
-            item[3],
-        )
+        key=lambda item: (item[1], item[2], item[3])
     )
 
-    used_short_symbols: set[str] = set()
+    # Alpaca aggregates identical option symbols. One long
+    # symbol can therefore represent inventory belonging to
+    # several verticals (for example +4 long calls against
+    # -3 at one strike and -1 at another). Reconstruct those
+    # verticals by allocating integer contract inventory to
+    # the nearest higher-strike shorts.
+    short_remaining = [
+        _integral_contract_quantity(item[0]) or 0
+        for item in short_positions
+    ]
     spreads: list[ManagedBullCallSpread] = []
 
     for (
@@ -136,88 +146,75 @@ def identify_managed_bull_call_spreads(
         expiration_code,
         long_strike,
     ) in long_positions:
-        matches = [
-            item
-            for item in short_positions
-            if (
-                item[0].symbol
-                not in used_short_symbols
-                and item[1] == underlying
-                and item[2] == expiration_code
-                and item[3] > long_strike
-                and abs(item[0].qty)
-                == long_position.qty
+        long_remaining = (
+            _integral_contract_quantity(long_position) or 0
+        )
+
+        while long_remaining > 0:
+            matches = [
+                index
+                for index, item in enumerate(short_positions)
+                if (
+                    short_remaining[index] > 0
+                    and item[1] == underlying
+                    and item[2] == expiration_code
+                    and item[3] > long_strike
+                )
+            ]
+
+            if not matches:
+                break
+
+            short_index = min(
+                matches,
+                key=lambda index: short_positions[index][3],
             )
-        ]
+            (
+                short_position,
+                _,
+                _,
+                short_strike,
+            ) = short_positions[short_index]
 
-        if not matches:
-            continue
+            contracts = min(
+                long_remaining,
+                short_remaining[short_index],
+            )
 
-        (
-            short_position,
-            _,
-            _,
-            short_strike,
-        ) = min(
-            matches,
-            key=lambda item: item[3],
-        )
-
-        contracts_decimal = (
-            long_position.qty
-        )
-
-        if (
-            contracts_decimal
-            != contracts_decimal.to_integral_value()
-        ):
-            continue
-
-        contracts = int(
-            contracts_decimal
-        )
-
-        if contracts <= 0:
-            continue
-
-        total_entry_debit_dollars = (
-            abs(long_position.cost_basis)
-            - abs(short_position.cost_basis)
-        )
-
-        if total_entry_debit_dollars <= 0:
-            continue
-
-        entry_debit_per_contract = (
-            total_entry_debit_dollars
-            / Decimal(contracts)
-            / Decimal("100")
-        )
-
-        spreads.append(
-            ManagedBullCallSpread(
-                underlying=underlying,
-                expiration_code=(
-                    expiration_code
-                ),
-                long_symbol=(
-                    long_position.symbol
-                ),
-                short_symbol=(
-                    short_position.symbol
-                ),
-                long_strike=long_strike,
-                short_strike=short_strike,
+            long_cost = _allocated_cost_basis(
+                position=long_position,
                 contracts=contracts,
-                entry_debit_per_contract=(
-                    entry_debit_per_contract
-                ),
             )
-        )
+            short_cost = _allocated_cost_basis(
+                position=short_position,
+                contracts=contracts,
+            )
+            total_entry_debit_dollars = long_cost - short_cost
 
-        used_short_symbols.add(
-            short_position.symbol
-        )
+            if total_entry_debit_dollars > 0:
+                entry_debit_per_contract = (
+                    total_entry_debit_dollars
+                    / Decimal(contracts)
+                    / Decimal("100")
+                )
+
+                spreads.append(
+                    ManagedBullCallSpread(
+                        underlying=underlying,
+                        expiration_code=expiration_code,
+                        long_symbol=long_position.symbol,
+                        short_symbol=short_position.symbol,
+                        long_strike=long_strike,
+                        short_strike=short_strike,
+                        contracts=contracts,
+                        entry_debit_per_contract=(
+                            entry_debit_per_contract
+                        ),
+                    )
+                )
+
+            long_remaining -= contracts
+            short_remaining[short_index] -= contracts
 
     return tuple(spreads)
 
@@ -227,56 +224,31 @@ def _read_executable_close_credit(
     option_data_client,
     spread: ManagedBullCallSpread,
 ) -> Decimal:
-    quotes = (
-        option_data_client
-        .get_option_latest_quote(
-            OptionLatestQuoteRequest(
-                symbol_or_symbols=[
-                    spread.long_symbol,
-                    spread.short_symbol,
-                ]
-            )
+    quotes = option_data_client.get_option_latest_quote(
+        OptionLatestQuoteRequest(
+            symbol_or_symbols=[
+                spread.long_symbol,
+                spread.short_symbol,
+            ]
         )
     )
 
-    long_quote = quotes.get(
-        spread.long_symbol
-    )
-    short_quote = quotes.get(
-        spread.short_symbol
-    )
+    long_quote = quotes.get(spread.long_symbol)
+    short_quote = quotes.get(spread.short_symbol)
 
-    if (
-        long_quote is None
-        or short_quote is None
-    ):
-        raise ValueError(
-            "spread_exit_quote_missing"
-        )
+    if long_quote is None or short_quote is None:
+        raise ValueError("spread_exit_quote_missing")
 
-    long_bid = Decimal(
-        str(long_quote.bid_price)
-    )
-    short_ask = Decimal(
-        str(short_quote.ask_price)
-    )
+    long_bid = Decimal(str(long_quote.bid_price))
+    short_ask = Decimal(str(short_quote.ask_price))
 
-    if (
-        long_bid <= 0
-        or short_ask <= 0
-    ):
-        raise ValueError(
-            "spread_exit_quote_invalid"
-        )
+    if long_bid <= 0 or short_ask <= 0:
+        raise ValueError("spread_exit_quote_invalid")
 
-    close_credit = (
-        long_bid - short_ask
-    )
+    close_credit = long_bid - short_ask
 
     if close_credit <= 0:
-        raise ValueError(
-            "spread_exit_credit_non_positive"
-        )
+        raise ValueError("spread_exit_credit_non_positive")
 
     return close_credit.quantize(
         Decimal("0.01"),
@@ -289,20 +261,13 @@ def _expected_return_percent(
     spread: ManagedBullCallSpread,
     close_credit: Decimal,
 ) -> Decimal:
-    entry_debit = (
-        spread.entry_debit_per_contract
-    )
+    entry_debit = spread.entry_debit_per_contract
 
     if entry_debit <= 0:
-        raise ValueError(
-            "spread_entry_debit_invalid"
-        )
+        raise ValueError("spread_entry_debit_invalid")
 
     return (
-        (
-            close_credit
-            - entry_debit
-        )
+        (close_credit - entry_debit)
         / entry_debit
         * Decimal("100")
     )
@@ -406,9 +371,7 @@ def run_paper_spread_exit_cycle(
     stale_exit_orders, pending_exit_symbols = (
         _pending_exit_state(
             snapshot=snapshot,
-            timeout_seconds=(
-                exit_order_timeout_seconds
-            ),
+            timeout_seconds=exit_order_timeout_seconds,
             now=now,
         )
     )
@@ -424,25 +387,17 @@ def run_paper_spread_exit_cycle(
                     block_new_entries=True,
                 )
 
-            trading_client.cancel_order_by_id(
-                order.order_id
-            )
+            trading_client.cancel_order_by_id(order.order_id)
             cancelled_ids.append(order.order_id)
 
         return PaperSpreadExitResult(
             submitted=False,
             reason="stale_exit_order_cancelled",
             block_new_entries=True,
-            cancelled_order_ids=tuple(
-                cancelled_ids
-            ),
+            cancelled_order_ids=tuple(cancelled_ids),
         )
 
-    spreads = (
-        identify_managed_bull_call_spreads(
-            snapshot
-        )
-    )
+    spreads = identify_managed_bull_call_spreads(snapshot)
 
     if not spreads:
         return PaperSpreadExitResult(
@@ -460,33 +415,24 @@ def run_paper_spread_exit_cycle(
             spread.short_symbol,
         }
 
-        if (
-            spread_symbols
-            & pending_exit_symbols
-        ):
+        if spread_symbols & pending_exit_symbols:
             # This spread already has a live risk-reducing
             # order. Leave it alone while continuing to
             # manage unrelated positions.
             continue
 
         try:
-            close_credit = (
-                _read_executable_close_credit(
-                    option_data_client=(
-                        option_data_client
-                    ),
-                    spread=spread,
-                )
+            close_credit = _read_executable_close_credit(
+                option_data_client=option_data_client,
+                spread=spread,
             )
         except ValueError:
             quote_failures += 1
             continue
 
-        expected_return = (
-            _expected_return_percent(
-                spread=spread,
-                close_credit=close_credit,
-            )
+        expected_return = _expected_return_percent(
+            spread=spread,
+            close_credit=close_credit,
         )
 
         candidate = (
@@ -495,20 +441,10 @@ def run_paper_spread_exit_cycle(
             expected_return,
         )
 
-        if (
-            expected_return
-            <= -stop_loss_percent
-        ):
-            stop_candidates.append(
-                candidate
-            )
-        elif (
-            expected_return
-            >= take_profit_percent
-        ):
-            profit_candidates.append(
-                candidate
-            )
+        if expected_return <= -stop_loss_percent:
+            stop_candidates.append(candidate)
+        elif expected_return >= take_profit_percent:
+            profit_candidates.append(candidate)
 
     selected = None
     reason = None
@@ -544,32 +480,20 @@ def run_paper_spread_exit_cycle(
             block_new_entries=False,
         )
 
-    (
-        spread,
-        close_credit,
-        expected_return,
-    ) = selected
+    spread, close_credit, expected_return = selected
 
-    order_request = (
-        build_managed_spread_close_order(
-            long_symbol=spread.long_symbol,
-            short_symbol=spread.short_symbol,
-            contracts=spread.contracts,
-            limit_credit=close_credit,
-        )
+    order_request = build_managed_spread_close_order(
+        long_symbol=spread.long_symbol,
+        short_symbol=spread.short_symbol,
+        contracts=spread.contracts,
+        limit_credit=close_credit,
     )
 
-    broker_order = (
-        trading_client.submit_order(
-            order_data=order_request,
-        )
+    broker_order = trading_client.submit_order(
+        order_data=order_request,
     )
 
-    broker_order_id = getattr(
-        broker_order,
-        "id",
-        None,
-    )
+    broker_order_id = getattr(broker_order, "id", None)
 
     return PaperSpreadExitResult(
         submitted=True,
@@ -580,9 +504,7 @@ def run_paper_spread_exit_cycle(
             else None
         ),
         expected_return_percent=(
-            expected_return.quantize(
-                Decimal("0.01")
-            )
+            expected_return.quantize(Decimal("0.01"))
         ),
         block_new_entries=False,
     )
