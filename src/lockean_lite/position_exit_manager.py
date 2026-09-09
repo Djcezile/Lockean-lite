@@ -1,6 +1,7 @@
 import re
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 
 from alpaca.data.requests import (
@@ -40,6 +41,7 @@ class PaperSpreadExitResult:
     broker_order_id: str | None = None
     expected_return_percent: Decimal | None = None
     block_new_entries: bool = False
+    cancelled_order_ids: tuple[str, ...] = ()
 
 
 def _parse_call_contract(
@@ -306,6 +308,45 @@ def _expected_return_percent(
     )
 
 
+def _normalize_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _pending_exit_state(
+    *,
+    snapshot: PaperPortfolioSnapshot,
+    timeout_seconds: int,
+    now: datetime,
+) -> tuple[tuple, set[str]]:
+    stale_orders = []
+    covered_symbols: set[str] = set()
+
+    for order in getattr(
+        snapshot,
+        "pending_mleg_orders",
+        (),
+    ):
+        if order.purpose != "exit":
+            continue
+
+        covered_symbols.update(order.symbols)
+
+        if order.submitted_at is None:
+            continue
+
+        age_seconds = (
+            _normalize_datetime(now)
+            - _normalize_datetime(order.submitted_at)
+        ).total_seconds()
+
+        if age_seconds >= timeout_seconds:
+            stale_orders.append(order)
+
+    return tuple(stale_orders), covered_symbols
+
+
 def run_paper_spread_exit_cycle(
     *,
     trading_client,
@@ -313,6 +354,8 @@ def run_paper_spread_exit_cycle(
     snapshot: PaperPortfolioSnapshot,
     take_profit_percent: Decimal = Decimal("10.00"),
     stop_loss_percent: Decimal = Decimal("50.00"),
+    exit_order_timeout_seconds: int = 240,
+    now_fn=None,
 ) -> PaperSpreadExitResult:
     if take_profit_percent < 0:
         raise ValueError(
@@ -324,11 +367,75 @@ def run_paper_spread_exit_cycle(
             "stop_loss_percent_must_be_non_negative"
         )
 
-    if snapshot.pending_spread_units > 0:
+    if exit_order_timeout_seconds <= 0:
+        raise ValueError(
+            "exit_order_timeout_seconds_must_be_positive"
+        )
+
+    pending_orders = getattr(
+        snapshot,
+        "pending_mleg_orders",
+        (),
+    )
+
+    if (
+        not pending_orders
+        and snapshot.pending_spread_units > 0
+    ):
         return PaperSpreadExitResult(
             submitted=False,
             reason="pending_mleg_order_exists",
             block_new_entries=True,
+        )
+
+    if any(
+        order.purpose == "unknown"
+        for order in pending_orders
+    ):
+        return PaperSpreadExitResult(
+            submitted=False,
+            reason="pending_mleg_order_purpose_unknown",
+            block_new_entries=True,
+        )
+
+    now = (
+        now_fn()
+        if now_fn is not None
+        else datetime.now(timezone.utc)
+    )
+    stale_exit_orders, pending_exit_symbols = (
+        _pending_exit_state(
+            snapshot=snapshot,
+            timeout_seconds=(
+                exit_order_timeout_seconds
+            ),
+            now=now,
+        )
+    )
+
+    if stale_exit_orders:
+        cancelled_ids = []
+
+        for order in stale_exit_orders:
+            if not order.order_id:
+                return PaperSpreadExitResult(
+                    submitted=False,
+                    reason="stale_exit_order_id_missing",
+                    block_new_entries=True,
+                )
+
+            trading_client.cancel_order_by_id(
+                order.order_id
+            )
+            cancelled_ids.append(order.order_id)
+
+        return PaperSpreadExitResult(
+            submitted=False,
+            reason="stale_exit_order_cancelled",
+            block_new_entries=True,
+            cancelled_order_ids=tuple(
+                cancelled_ids
+            ),
         )
 
     spreads = (
@@ -348,6 +455,20 @@ def run_paper_spread_exit_cycle(
     quote_failures = 0
 
     for spread in spreads:
+        spread_symbols = {
+            spread.long_symbol,
+            spread.short_symbol,
+        }
+
+        if (
+            spread_symbols
+            & pending_exit_symbols
+        ):
+            # This spread already has a live risk-reducing
+            # order. Leave it alone while continuing to
+            # manage unrelated positions.
+            continue
+
         try:
             close_credit = (
                 _read_executable_close_credit(
@@ -415,7 +536,12 @@ def run_paper_spread_exit_cycle(
 
         return PaperSpreadExitResult(
             submitted=False,
-            reason="no_managed_spread_exit_trigger",
+            reason=(
+                "pending_exit_order_active"
+                if pending_exit_symbols
+                else "no_managed_spread_exit_trigger"
+            ),
+            block_new_entries=False,
         )
 
     (
@@ -458,5 +584,5 @@ def run_paper_spread_exit_cycle(
                 Decimal("0.01")
             )
         ),
-        block_new_entries=True,
+        block_new_entries=False,
     )
