@@ -14,6 +14,10 @@ def _snapshot(**overrides):
         "day_pl": Decimal("0"),
         "managed_spreads": 0,
         "pending_spread_units": 0,
+        "pending_entry_spread_units": 0,
+        "pending_exit_spread_units": 0,
+        "pending_unknown_spread_units": 0,
+        "pending_mleg_orders": (),
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -40,11 +44,40 @@ def test_portfolio_gate_blocks_fifth_limit_from_becoming_sixth():
     assert result.reason == "portfolio_spread_limit_reached"
 
 
-def test_portfolio_gate_counts_pending_orders_against_five_spread_cap():
+def test_portfolio_gate_counts_pending_entry_orders_against_five_spread_cap():
     result = evaluate_portfolio_entry(
         snapshot=_snapshot(
             managed_spreads=3,
-            pending_spread_units=2,
+            pending_entry_spread_units=2,
+            pending_mleg_orders=(object(),),
+        ),
+        maximum_open_spreads=5,
+    )
+
+    assert result.allowed is False
+    assert result.reason == "portfolio_spread_limit_reached"
+
+
+def test_portfolio_gate_does_not_count_pending_exit_as_new_exposure():
+    result = evaluate_portfolio_entry(
+        snapshot=_snapshot(
+            managed_spreads=3,
+            pending_exit_spread_units=2,
+            pending_mleg_orders=(object(),),
+        ),
+        maximum_open_spreads=5,
+    )
+
+    assert result.allowed is True
+    assert result.reason == "portfolio_entry_allowed"
+
+
+def test_portfolio_gate_counts_unknown_pending_order_conservatively():
+    result = evaluate_portfolio_entry(
+        snapshot=_snapshot(
+            managed_spreads=4,
+            pending_unknown_spread_units=1,
+            pending_mleg_orders=(object(),),
         ),
         maximum_open_spreads=5,
     )
@@ -57,7 +90,8 @@ def test_portfolio_gate_allows_when_filled_and_pending_total_is_below_cap():
     result = evaluate_portfolio_entry(
         snapshot=_snapshot(
             managed_spreads=2,
-            pending_spread_units=2,
+            pending_entry_spread_units=2,
+            pending_mleg_orders=(object(),),
         ),
         maximum_open_spreads=5,
     )
