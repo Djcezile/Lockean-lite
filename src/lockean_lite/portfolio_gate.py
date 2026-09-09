@@ -52,17 +52,45 @@ def evaluate_portfolio_entry(
             reason="daily_loss_limit_reached",
         )
 
-    pending_spread_units = int(
-        getattr(
-            snapshot,
-            "pending_spread_units",
-            0,
-        )
+    pending_orders = getattr(
+        snapshot,
+        "pending_mleg_orders",
+        (),
     )
+
+    if pending_orders:
+        pending_entry_units = int(
+            getattr(
+                snapshot,
+                "pending_entry_spread_units",
+                0,
+            )
+        )
+        pending_unknown_units = int(
+            getattr(
+                snapshot,
+                "pending_unknown_spread_units",
+                0,
+            )
+        )
+        pending_risk_units = (
+            pending_entry_units
+            + pending_unknown_units
+        )
+    else:
+        # Backward-compatible conservative behavior for
+        # snapshots created before order-purpose tracking.
+        pending_risk_units = int(
+            getattr(
+                snapshot,
+                "pending_spread_units",
+                0,
+            )
+        )
 
     committed_spreads = (
         snapshot.managed_spreads
-        + pending_spread_units
+        + pending_risk_units
     )
 
     if committed_spreads >= maximum_open_spreads:
