@@ -284,9 +284,10 @@ def _pending_exit_state(
     snapshot: PaperPortfolioSnapshot,
     timeout_seconds: int,
     now: datetime,
-) -> tuple[tuple, set[str]]:
+) -> tuple[tuple, set[frozenset[str]], bool]:
     stale_orders = []
-    covered_symbols: set[str] = set()
+    covered_pairs: set[frozenset[str]] = set()
+    scope_unknown = False
 
     for order in getattr(
         snapshot,
@@ -296,7 +297,12 @@ def _pending_exit_state(
         if order.purpose != "exit":
             continue
 
-        covered_symbols.update(order.symbols)
+        if len(order.symbols) == 2:
+            covered_pairs.add(
+                frozenset(order.symbols)
+            )
+        else:
+            scope_unknown = True
 
         if order.submitted_at is None:
             continue
@@ -309,7 +315,7 @@ def _pending_exit_state(
         if age_seconds >= timeout_seconds:
             stale_orders.append(order)
 
-    return tuple(stale_orders), covered_symbols
+    return tuple(stale_orders), covered_pairs, scope_unknown
 
 
 def run_paper_spread_exit_cycle(
@@ -368,12 +374,14 @@ def run_paper_spread_exit_cycle(
         if now_fn is not None
         else datetime.now(timezone.utc)
     )
-    stale_exit_orders, pending_exit_symbols = (
-        _pending_exit_state(
-            snapshot=snapshot,
-            timeout_seconds=exit_order_timeout_seconds,
-            now=now,
-        )
+    (
+        stale_exit_orders,
+        pending_exit_pairs,
+        pending_exit_scope_unknown,
+    ) = _pending_exit_state(
+        snapshot=snapshot,
+        timeout_seconds=exit_order_timeout_seconds,
+        now=now,
     )
 
     if stale_exit_orders:
@@ -397,6 +405,13 @@ def run_paper_spread_exit_cycle(
             cancelled_order_ids=tuple(cancelled_ids),
         )
 
+    if pending_exit_scope_unknown:
+        return PaperSpreadExitResult(
+            submitted=False,
+            reason="pending_exit_order_scope_unknown",
+            block_new_entries=True,
+        )
+
     spreads = identify_managed_bull_call_spreads(snapshot)
 
     if not spreads:
@@ -410,15 +425,18 @@ def run_paper_spread_exit_cycle(
     quote_failures = 0
 
     for spread in spreads:
-        spread_symbols = {
-            spread.long_symbol,
-            spread.short_symbol,
-        }
+        spread_pair = frozenset(
+            (
+                spread.long_symbol,
+                spread.short_symbol,
+            )
+        )
 
-        if spread_symbols & pending_exit_symbols:
-            # This spread already has a live risk-reducing
-            # order. Leave it alone while continuing to
-            # manage unrelated positions.
+        if spread_pair in pending_exit_pairs:
+            # This exact reconstructed spread already has a
+            # live risk-reducing order. A different spread may
+            # share one aggregated Alpaca leg and must remain
+            # independently manageable.
             continue
 
         try:
@@ -474,7 +492,7 @@ def run_paper_spread_exit_cycle(
             submitted=False,
             reason=(
                 "pending_exit_order_active"
-                if pending_exit_symbols
+                if pending_exit_pairs
                 else "no_managed_spread_exit_trigger"
             ),
             block_new_entries=False,
