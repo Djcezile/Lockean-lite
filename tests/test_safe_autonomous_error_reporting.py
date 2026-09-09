@@ -7,6 +7,9 @@ from lockean_lite.autonomous_session import (
 from lockean_lite.paper_portfolio_snapshot import (
     PaperPortfolioSnapshot,
 )
+from lockean_lite.safe_error_reporting import (
+    safe_exception_reason,
+)
 
 
 def _portfolio():
@@ -89,3 +92,24 @@ def test_session_redacts_free_form_value_error_text():
         "AUTONOMOUS CYCLE: ERROR | ValueError | value_error"
         in joined
     )
+
+
+def test_alpaca_api_error_gets_specific_sanitized_reason():
+    APIError = type("APIError", (Exception,), {})
+    error = APIError("sensitive broker payload")
+    error.code = 42210000
+
+    reason = safe_exception_reason(error)
+
+    assert reason == "alpaca_api_error:42210000"
+    assert "sensitive" not in reason
+
+
+def test_alpaca_api_error_without_code_stays_specific_but_redacted():
+    APIError = type("APIError", (Exception,), {})
+    error = APIError("secret response body")
+
+    reason = safe_exception_reason(error)
+
+    assert reason == "alpaca_api_error"
+    assert "secret" not in reason
