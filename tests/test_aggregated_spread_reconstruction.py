@@ -1,9 +1,11 @@
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
 from lockean_lite.paper_portfolio_snapshot import (
     PaperPortfolioSnapshot,
     PaperPositionSnapshot,
+    PendingMlegOrderSnapshot,
 )
 from lockean_lite.position_exit_manager import (
     identify_managed_bull_call_spreads,
@@ -24,7 +26,7 @@ def _position(symbol, qty, cost_basis):
     )
 
 
-def _snapshot():
+def _snapshot(*, pending_orders=()):
     positions = (
         _position(
             "SPY260918C00766000",
@@ -41,6 +43,11 @@ def _snapshot():
             -1,
             "-20",
         ),
+    )
+
+    pending_units = sum(
+        order.remaining_units
+        for order in pending_orders
     )
 
     return PaperPortfolioSnapshot(
@@ -60,6 +67,9 @@ def _snapshot():
         positions=positions,
         option_contract_units=Decimal("8"),
         managed_spreads=4,
+        pending_spread_units=pending_units,
+        pending_exit_spread_units=pending_units,
+        pending_mleg_orders=pending_orders,
     )
 
 
@@ -75,8 +85,8 @@ class MappedOptionDataClient:
                 ask_price=Decimal("0.20"),
             ),
             "SPY260918C00768000": SimpleNamespace(
-                bid_price=Decimal("0.25"),
-                ask_price=Decimal("0.30"),
+                bid_price=Decimal("0.01"),
+                ask_price=Decimal("0.05"),
             ),
         }
         return {
@@ -130,3 +140,37 @@ def test_exit_cycle_can_close_one_reconstructed_aggregated_vertical():
     assert result.broker_order_id == "aggregate-exit-1"
     assert len(trading_client.orders) == 1
     assert trading_client.orders[0].qty == 3
+
+
+def test_pending_exit_on_one_pair_does_not_hide_other_pair_sharing_long_leg():
+    now = datetime(2026, 9, 10, 15, 0, tzinfo=timezone.utc)
+    pending_exit = PendingMlegOrderSnapshot(
+        order_id="exit-766-767",
+        remaining_units=3,
+        purpose="exit",
+        submitted_at=now - timedelta(minutes=1),
+        symbols=(
+            "SPY260918C00766000",
+            "SPY260918C00767000",
+        ),
+    )
+    trading_client = FakeTradingClient()
+
+    result = run_paper_spread_exit_cycle(
+        trading_client=trading_client,
+        option_data_client=MappedOptionDataClient(),
+        snapshot=_snapshot(
+            pending_orders=(pending_exit,)
+        ),
+        take_profit_percent=Decimal("5"),
+        stop_loss_percent=Decimal("50"),
+        now_fn=lambda: now,
+    )
+
+    assert result.submitted
+    assert result.reason == "take_profit_exit_submitted"
+    assert len(trading_client.orders) == 1
+    order = trading_client.orders[0]
+    assert order.qty == 1
+    assert order.legs[0].symbol == "SPY260918C00766000"
+    assert order.legs[1].symbol == "SPY260918C00768000"
