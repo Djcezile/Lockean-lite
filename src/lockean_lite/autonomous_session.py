@@ -2,7 +2,7 @@ import argparse
 import os
 import time
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from alpaca.data.historical import (
@@ -39,6 +39,8 @@ DEFAULT_MAXIMUM_OPEN_SPREADS = 5
 DEFAULT_MAXIMUM_DAILY_LOSS = Decimal("750.00")
 DEFAULT_TAKE_PROFIT_PERCENT = Decimal("10.00")
 DEFAULT_STOP_LOSS_PERCENT = Decimal("50.00")
+DEFAULT_EXIT_ORDER_TIMEOUT_SECONDS = 240
+DEFAULT_EOD_ENTRY_CUTOFF_MINUTES = 5
 
 
 @dataclass(frozen=True)
@@ -49,15 +51,64 @@ class AutonomousSessionSummary:
     last_reason: str
 
 
+def _normalize_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _seconds_until_market_close(
+    *,
+    clock,
+    now: datetime,
+) -> float | None:
+    next_close = getattr(clock, "next_close", None)
+    if not isinstance(next_close, datetime):
+        return None
+
+    return (
+        _normalize_datetime(next_close)
+        - _normalize_datetime(now)
+    ).total_seconds()
+
+
+def _cancel_pending_mleg_orders(
+    *,
+    trading_client,
+    snapshot,
+) -> tuple[str, ...]:
+    cancelled_ids = []
+
+    for order in getattr(
+        snapshot,
+        "pending_mleg_orders",
+        (),
+    ):
+        if not order.order_id:
+            raise ValueError(
+                "pending_mleg_order_id_missing"
+            )
+
+        trading_client.cancel_order_by_id(
+            order.order_id
+        )
+        cancelled_ids.append(order.order_id)
+
+    return tuple(cancelled_ids)
+
+
 def run_autonomous_paper_session(
     *,
     clock_provider,
     portfolio_provider,
     cycle_runner,
     exit_runner=None,
+    end_of_day_cancel_runner=None,
     interval_seconds: int = DEFAULT_INTERVAL_SECONDS,
     maximum_open_spreads: int = DEFAULT_MAXIMUM_OPEN_SPREADS,
     maximum_daily_loss: Decimal = DEFAULT_MAXIMUM_DAILY_LOSS,
+    end_of_day_entry_cutoff_minutes: int = DEFAULT_EOD_ENTRY_CUTOFF_MINUTES,
+    now_fn=None,
     sleep_fn=time.sleep,
     output_fn=print,
     max_iterations: int | None = None,
@@ -65,6 +116,11 @@ def run_autonomous_paper_session(
     if interval_seconds <= 0:
         raise ValueError(
             "interval_seconds_must_be_positive"
+        )
+
+    if end_of_day_entry_cutoff_minutes < 0:
+        raise ValueError(
+            "end_of_day_entry_cutoff_minutes_must_be_non_negative"
         )
 
     iterations = 0
@@ -94,6 +150,12 @@ def run_autonomous_paper_session(
             f"{maximum_daily_loss:.2f}"
         )
     )
+    output_fn(
+        (
+            "END-OF-DAY ENTRY CUTOFF: "
+            f"{end_of_day_entry_cutoff_minutes} minutes"
+        )
+    )
 
     while True:
         iterations += 1
@@ -103,12 +165,15 @@ def run_autonomous_paper_session(
             snapshot = portfolio_provider()
         except Exception as error:
             last_status = "STATE_UNAVAILABLE"
-            last_reason = "alpaca_session_state_unavailable"
+            last_reason = safe_exception_reason(
+                error
+            )
             output_fn("")
             output_fn(
                 (
                     "ALPACA SESSION STATE: UNAVAILABLE | "
-                    f"{type(error).__name__}"
+                    f"{type(error).__name__} | "
+                    f"{last_reason}"
                 )
             )
             output_fn(
@@ -186,6 +251,87 @@ def run_autonomous_paper_session(
 
         market_has_opened = True
 
+        current_time = (
+            now_fn()
+            if now_fn is not None
+            else datetime.now(timezone.utc)
+        )
+        seconds_to_close = (
+            _seconds_until_market_close(
+                clock=clock,
+                now=current_time,
+            )
+        )
+        cutoff_seconds = (
+            end_of_day_entry_cutoff_minutes
+            * 60
+        )
+
+        if (
+            seconds_to_close is not None
+            and seconds_to_close <= cutoff_seconds
+        ):
+            last_status = "EOD_ENTRY_BLOCKED"
+            last_reason = "end_of_day_entry_cutoff"
+
+            if end_of_day_cancel_runner is not None:
+                try:
+                    cancelled_ids = (
+                        end_of_day_cancel_runner(
+                            snapshot
+                        )
+                    )
+                except Exception as error:
+                    last_reason = safe_exception_reason(
+                        error
+                    )
+                    output_fn(
+                        (
+                            "EOD ORDER CLEANUP: ERROR | "
+                            f"{type(error).__name__} | "
+                            f"{last_reason}"
+                        )
+                    )
+                    output_fn(
+                        "FAIL CLOSED: no new entry near market close"
+                    )
+                else:
+                    if cancelled_ids:
+                        output_fn(
+                            (
+                                "EOD ORDER CLEANUP: CANCELLED | "
+                                + ",".join(cancelled_ids)
+                            )
+                        )
+                    else:
+                        output_fn(
+                            "EOD ORDER CLEANUP: NO PENDING MLEG ORDERS"
+                        )
+
+            output_fn(
+                "EOD ENTRY CUTOFF: no new positions will be opened"
+            )
+
+            if (
+                max_iterations is not None
+                and iterations >= max_iterations
+            ):
+                return AutonomousSessionSummary(
+                    iterations=iterations,
+                    trade_cycles=trade_cycles,
+                    last_status=last_status,
+                    last_reason=last_reason,
+                )
+
+            output_fn(
+                (
+                    "NEXT AUTONOMOUS CHECK IN "
+                    f"{interval_seconds} SECONDS"
+                )
+            )
+            sleep_fn(interval_seconds)
+            continue
+
         if exit_runner is not None:
             try:
                 exit_result = exit_runner(
@@ -193,13 +339,14 @@ def run_autonomous_paper_session(
                 )
             except Exception as error:
                 last_status = "EXIT_ERROR"
-                last_reason = (
-                    "position_exit_cycle_failed_closed"
+                last_reason = safe_exception_reason(
+                    error
                 )
                 output_fn(
                     (
                         "POSITION EXIT CHECK: ERROR | "
-                        f"{type(error).__name__}"
+                        f"{type(error).__name__} | "
+                        f"{last_reason}"
                     )
                 )
                 output_fn(
@@ -225,6 +372,17 @@ def run_autonomous_paper_session(
                 )
                 sleep_fn(interval_seconds)
                 continue
+
+            if exit_result.cancelled_order_ids:
+                output_fn(
+                    (
+                        "POSITION EXIT ORDER: CANCELLED | "
+                        f"{exit_result.reason} | "
+                        + ",".join(
+                            exit_result.cancelled_order_ids
+                        )
+                    )
+                )
 
             if exit_result.submitted:
                 last_status = "EXIT_SUBMITTED"
@@ -473,6 +631,24 @@ def main(argv=None) -> int:
             "percentage of the entry debit."
         ),
     )
+    parser.add_argument(
+        "--exit-order-timeout-seconds",
+        type=int,
+        default=DEFAULT_EXIT_ORDER_TIMEOUT_SECONDS,
+        help=(
+            "Cancel an unfilled exit MLEG after this "
+            "many seconds so a later cycle can reprice it."
+        ),
+    )
+    parser.add_argument(
+        "--eod-entry-cutoff-minutes",
+        type=int,
+        default=DEFAULT_EOD_ENTRY_CUTOFF_MINUTES,
+        help=(
+            "Stop new entries and cancel pending MLEG "
+            "orders this many minutes before market close."
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -525,6 +701,15 @@ def main(argv=None) -> int:
             stop_loss_percent=(
                 args.stop_loss_percent
             ),
+            exit_order_timeout_seconds=(
+                args.exit_order_timeout_seconds
+            ),
+        )
+
+    def end_of_day_cancel_runner(snapshot):
+        return _cancel_pending_mleg_orders(
+            trading_client=trading_client,
+            snapshot=snapshot,
         )
 
     def cycle_runner():
@@ -549,12 +734,18 @@ def main(argv=None) -> int:
         portfolio_provider=portfolio_provider,
         cycle_runner=cycle_runner,
         exit_runner=exit_runner,
+        end_of_day_cancel_runner=(
+            end_of_day_cancel_runner
+        ),
         interval_seconds=args.interval_seconds,
         maximum_open_spreads=(
             args.maximum_open_spreads
         ),
         maximum_daily_loss=(
             args.maximum_daily_loss
+        ),
+        end_of_day_entry_cutoff_minutes=(
+            args.eod_entry_cutoff_minutes
         ),
     )
 
