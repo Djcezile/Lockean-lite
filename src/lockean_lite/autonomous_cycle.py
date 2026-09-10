@@ -22,6 +22,7 @@ class AutonomousTradeCycleResult:
     status: str
     reason: str
     execution_proof: ExecutionProof | None = None
+    diagnostics: tuple[str, ...] = ()
 
 
 def run_autonomous_trade_cycle(
@@ -33,6 +34,7 @@ def run_autonomous_trade_cycle(
     account_snapshot_provider,
     authority,
     execution_gateway,
+    proposal_policy_checker=None,
 ) -> AutonomousTradeCycleResult:
     market_context = build_agent_market_context(
         spy_evidence=spy_evidence,
@@ -75,6 +77,18 @@ def run_autonomous_trade_cycle(
             status="REJECTED",
             reason=str(error),
         )
+
+    if proposal_policy_checker is not None:
+        policy_decision = proposal_policy_checker(
+            proposal,
+            candidate_quotes,
+        )
+
+        if not policy_decision.allowed:
+            return AutonomousTradeCycleResult(
+                status="REJECTED",
+                reason=policy_decision.reason,
+            )
 
     evidence_validation_result = (
         validate_market_evidence_for_proposal(
