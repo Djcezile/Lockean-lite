@@ -44,7 +44,10 @@ RECOMMENDATION_SCHEMA = {
                 "integer",
                 "null",
             ],
-            "minimum": 1,
+            "enum": [
+                1,
+                None,
+            ],
         },
     },
     "required": [
