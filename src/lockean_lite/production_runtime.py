@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
@@ -24,7 +25,11 @@ from lockean_lite.alpaca_option_quote_adapter import (
     read_spy_call_candidate_quotes,
 )
 from lockean_lite.autonomous_cycle import (
+    AutonomousTradeCycleResult,
     run_autonomous_trade_cycle,
+)
+from lockean_lite.entry_portfolio_policy import (
+    evaluate_entry_proposal_policy,
 )
 from lockean_lite.evidence_ingestion import (
     read_cboe_vix_daily_evidence,
@@ -39,7 +44,11 @@ from lockean_lite.lockean_authority import (
 from lockean_lite.openai_recommendation_model import (
     create_openai_recommendation_model,
 )
+from lockean_lite.paper_portfolio_snapshot import (
+    read_live_paper_portfolio_snapshot,
+)
 from lockean_lite.vix_history_source import (
+    ResilientVixHistorySource,
     fetch_official_vix_history,
 )
 
@@ -51,6 +60,31 @@ DEFAULT_HISTORY_START = datetime(
     1,
     tzinfo=timezone.utc,
 )
+DEFAULT_MAXIMUM_SAME_STRUCTURE_UNITS = 2
+DEFAULT_VIX_CACHE_MAX_AGE_SECONDS = 900
+
+_DEFAULT_VIX_SOURCE = None
+_DEFAULT_VIX_FETCHER_ID = None
+
+
+def _get_default_vix_source():
+    global _DEFAULT_VIX_SOURCE
+    global _DEFAULT_VIX_FETCHER_ID
+
+    fetcher_id = id(fetch_official_vix_history)
+    if (
+        _DEFAULT_VIX_SOURCE is None
+        or _DEFAULT_VIX_FETCHER_ID != fetcher_id
+    ):
+        _DEFAULT_VIX_SOURCE = ResilientVixHistorySource(
+            fetcher=fetch_official_vix_history,
+            maximum_cache_age_seconds=(
+                DEFAULT_VIX_CACHE_MAX_AGE_SECONDS
+            ),
+        )
+        _DEFAULT_VIX_FETCHER_ID = fetcher_id
+
+    return _DEFAULT_VIX_SOURCE
 
 
 def run_live_production_autonomous_cycle(
@@ -61,6 +95,8 @@ def run_live_production_autonomous_cycle(
     authorization_signing_key: bytes,
     proposal_id_provider=None,
     agent_activity_mode: str = "balanced",
+    maximum_same_structure_units: int = DEFAULT_MAXIMUM_SAME_STRUCTURE_UNITS,
+    vix_history_source=None,
 ):
     if not authorization_signing_key:
         raise ValueError(
@@ -76,9 +112,12 @@ def run_live_production_autonomous_cycle(
         credentials.secret_key,
     )
 
-    vix_csv_text = (
-        fetch_official_vix_history()
+    source = (
+        vix_history_source
+        if vix_history_source is not None
+        else _get_default_vix_source()
     )
+    vix_read = source.read()
 
     spy_evidence = read_spy_daily_evidence(
         client=stock_client,
@@ -88,12 +127,12 @@ def run_live_production_autonomous_cycle(
 
     vix_evidence = (
         read_cboe_vix_daily_evidence(
-            csv_text=vix_csv_text,
+            csv_text=vix_read.csv_text,
             completed_through=completed_through,
         )
     )
 
-    return run_production_autonomous_cycle(
+    result = run_production_autonomous_cycle(
         spy_evidence=spy_evidence,
         vix_evidence=vix_evidence,
         expiration=expiration,
@@ -109,7 +148,22 @@ def run_live_production_autonomous_cycle(
         agent_activity_mode=(
             agent_activity_mode
         ),
+        maximum_same_structure_units=(
+            maximum_same_structure_units
+        ),
     )
+
+    if isinstance(result, AutonomousTradeCycleResult):
+        diagnostic = (
+            f"vix_source={vix_read.mode}:"
+            f"cache_age_seconds={vix_read.cache_age_seconds}"
+        )
+        return replace(
+            result,
+            diagnostics=result.diagnostics + (diagnostic,),
+        )
+
+    return result
 
 
 def run_production_autonomous_cycle(
@@ -122,10 +176,16 @@ def run_production_autonomous_cycle(
     proposal_id_provider=None,
     strike_window: Decimal = DEFAULT_STRIKE_WINDOW,
     agent_activity_mode: str = "balanced",
+    maximum_same_structure_units: int = DEFAULT_MAXIMUM_SAME_STRUCTURE_UNITS,
 ):
     if not authorization_signing_key:
         raise ValueError(
             "authorization_signing_key_required"
+        )
+
+    if maximum_same_structure_units <= 0:
+        raise ValueError(
+            "maximum_same_structure_units_must_be_positive"
         )
 
     if proposal_id_provider is None:
@@ -204,6 +264,19 @@ def run_production_autonomous_cycle(
             ),
         )
 
+    def proposal_policy_checker(proposal, candidate_quotes):
+        portfolio_snapshot = read_live_paper_portfolio_snapshot(
+            trading_client=trading_client,
+        )
+        return evaluate_entry_proposal_policy(
+            proposal=proposal,
+            candidate_quotes=candidate_quotes,
+            snapshot=portfolio_snapshot,
+            maximum_same_structure_units=(
+                maximum_same_structure_units
+            ),
+        )
+
     authority = LockeanAuthority(
         maximum_allowed_loss=(
             maximum_allowed_loss
@@ -237,5 +310,8 @@ def run_production_autonomous_cycle(
         authority=authority,
         execution_gateway=(
             execution_gateway
+        ),
+        proposal_policy_checker=(
+            proposal_policy_checker
         ),
     )
