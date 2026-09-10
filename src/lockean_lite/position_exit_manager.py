@@ -2,7 +2,7 @@ import re
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_CEILING, ROUND_DOWN
 
 from alpaca.data.requests import (
     OptionLatestQuoteRequest,
@@ -42,6 +42,13 @@ class PaperSpreadExitResult:
     expected_return_percent: Decimal | None = None
     block_new_entries: bool = False
     cancelled_order_ids: tuple[str, ...] = ()
+    observed_close_credit: Decimal | None = None
+    submitted_limit_credit: Decimal | None = None
+    submitted_limit_return_percent: Decimal | None = None
+    entry_debit_per_contract: Decimal | None = None
+    contracts: int | None = None
+    long_symbol: str | None = None
+    short_symbol: str | None = None
 
 
 def _parse_call_contract(
@@ -128,12 +135,10 @@ def identify_managed_bull_call_spreads(
         key=lambda item: (item[1], item[2], item[3])
     )
 
-    # Alpaca aggregates identical option symbols. One long
-    # symbol can therefore represent inventory belonging to
-    # several verticals (for example +4 long calls against
-    # -3 at one strike and -1 at another). Reconstruct those
-    # verticals by allocating integer contract inventory to
-    # the nearest higher-strike shorts.
+    # Alpaca aggregates identical option symbols. One long symbol can
+    # therefore represent inventory belonging to several verticals.
+    # Reconstruct those verticals by allocating integer contract inventory
+    # to the nearest higher-strike shorts.
     short_remaining = [
         _integral_contract_quantity(item[0]) or 0
         for item in short_positions
@@ -273,6 +278,46 @@ def _expected_return_percent(
     )
 
 
+def _take_profit_limit_credit(
+    *,
+    spread: ManagedBullCallSpread,
+    observed_close_credit: Decimal,
+    take_profit_percent: Decimal,
+    price_concession: Decimal,
+) -> Decimal:
+    if price_concession < 0:
+        raise ValueError("take_profit_price_concession_must_be_non_negative")
+
+    target_credit = (
+        spread.entry_debit_per_contract
+        * (
+            Decimal("1")
+            + take_profit_percent / Decimal("100")
+        )
+    ).quantize(
+        Decimal("0.01"),
+        rounding=ROUND_CEILING,
+    )
+
+    # The trigger may mathematically satisfy the threshold while cent
+    # rounding places target_credit one cent above the observed executable
+    # credit. Never make a submitted limit less executable in that case.
+    target_credit = min(target_credit, observed_close_credit)
+
+    conceded_credit = (
+        observed_close_credit - price_concession
+    ).quantize(
+        Decimal("0.01"),
+        rounding=ROUND_CEILING,
+    )
+
+    return max(
+        target_credit,
+        conceded_credit,
+        Decimal("0.01"),
+    )
+
+
 def _normalize_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
@@ -284,10 +329,9 @@ def _pending_exit_state(
     snapshot: PaperPortfolioSnapshot,
     timeout_seconds: int,
     now: datetime,
-) -> tuple[tuple, set[frozenset[str]], bool]:
+) -> tuple[tuple, tuple[frozenset[str], ...]]:
     stale_orders = []
-    covered_pairs: set[frozenset[str]] = set()
-    scope_unknown = False
+    covered_structures: list[frozenset[str]] = []
 
     for order in getattr(
         snapshot,
@@ -297,12 +341,10 @@ def _pending_exit_state(
         if order.purpose != "exit":
             continue
 
-        if len(order.symbols) == 2:
-            covered_pairs.add(
+        if order.symbols:
+            covered_structures.append(
                 frozenset(order.symbols)
             )
-        else:
-            scope_unknown = True
 
         if order.submitted_at is None:
             continue
@@ -315,7 +357,7 @@ def _pending_exit_state(
         if age_seconds >= timeout_seconds:
             stale_orders.append(order)
 
-    return tuple(stale_orders), covered_pairs, scope_unknown
+    return tuple(stale_orders), tuple(covered_structures)
 
 
 def run_paper_spread_exit_cycle(
@@ -326,6 +368,7 @@ def run_paper_spread_exit_cycle(
     take_profit_percent: Decimal = Decimal("10.00"),
     stop_loss_percent: Decimal = Decimal("50.00"),
     exit_order_timeout_seconds: int = 240,
+    take_profit_price_concession: Decimal = Decimal("0.02"),
     now_fn=None,
 ) -> PaperSpreadExitResult:
     if take_profit_percent < 0:
@@ -341,6 +384,11 @@ def run_paper_spread_exit_cycle(
     if exit_order_timeout_seconds <= 0:
         raise ValueError(
             "exit_order_timeout_seconds_must_be_positive"
+        )
+
+    if take_profit_price_concession < 0:
+        raise ValueError(
+            "take_profit_price_concession_must_be_non_negative"
         )
 
     pending_orders = getattr(
@@ -374,14 +422,12 @@ def run_paper_spread_exit_cycle(
         if now_fn is not None
         else datetime.now(timezone.utc)
     )
-    (
-        stale_exit_orders,
-        pending_exit_pairs,
-        pending_exit_scope_unknown,
-    ) = _pending_exit_state(
-        snapshot=snapshot,
-        timeout_seconds=exit_order_timeout_seconds,
-        now=now,
+    stale_exit_orders, pending_exit_structures = (
+        _pending_exit_state(
+            snapshot=snapshot,
+            timeout_seconds=exit_order_timeout_seconds,
+            now=now,
+        )
     )
 
     if stale_exit_orders:
@@ -405,13 +451,6 @@ def run_paper_spread_exit_cycle(
             cancelled_order_ids=tuple(cancelled_ids),
         )
 
-    if pending_exit_scope_unknown:
-        return PaperSpreadExitResult(
-            submitted=False,
-            reason="pending_exit_order_scope_unknown",
-            block_new_entries=True,
-        )
-
     spreads = identify_managed_bull_call_spreads(snapshot)
 
     if not spreads:
@@ -425,18 +464,14 @@ def run_paper_spread_exit_cycle(
     quote_failures = 0
 
     for spread in spreads:
-        spread_pair = frozenset(
-            (
-                spread.long_symbol,
-                spread.short_symbol,
-            )
+        spread_structure = frozenset(
+            {spread.long_symbol, spread.short_symbol}
         )
 
-        if spread_pair in pending_exit_pairs:
-            # This exact reconstructed spread already has a
-            # live risk-reducing order. A different spread may
-            # share one aggregated Alpaca leg and must remain
-            # independently manageable.
+        if spread_structure in pending_exit_structures:
+            # This exact vertical already has a live risk-reducing order.
+            # A different vertical may share one aggregated Alpaca leg and
+            # must remain independently manageable.
             continue
 
         try:
@@ -492,7 +527,7 @@ def run_paper_spread_exit_cycle(
             submitted=False,
             reason=(
                 "pending_exit_order_active"
-                if pending_exit_pairs
+                if pending_exit_structures
                 else "no_managed_spread_exit_trigger"
             ),
             block_new_entries=False,
@@ -500,11 +535,28 @@ def run_paper_spread_exit_cycle(
 
     spread, close_credit, expected_return = selected
 
+    if reason == "take_profit_exit_submitted":
+        submitted_limit_credit = _take_profit_limit_credit(
+            spread=spread,
+            observed_close_credit=close_credit,
+            take_profit_percent=take_profit_percent,
+            price_concession=take_profit_price_concession,
+        )
+    else:
+        # Stop exits already filled reliably in live paper testing. Preserve
+        # the observed executable credit rather than adding needless slippage.
+        submitted_limit_credit = close_credit
+
+    submitted_limit_return = _expected_return_percent(
+        spread=spread,
+        close_credit=submitted_limit_credit,
+    )
+
     order_request = build_managed_spread_close_order(
         long_symbol=spread.long_symbol,
         short_symbol=spread.short_symbol,
         contracts=spread.contracts,
-        limit_credit=close_credit,
+        limit_credit=submitted_limit_credit,
     )
 
     broker_order = trading_client.submit_order(
@@ -525,4 +577,13 @@ def run_paper_spread_exit_cycle(
             expected_return.quantize(Decimal("0.01"))
         ),
         block_new_entries=False,
+        observed_close_credit=close_credit,
+        submitted_limit_credit=submitted_limit_credit,
+        submitted_limit_return_percent=(
+            submitted_limit_return.quantize(Decimal("0.01"))
+        ),
+        entry_debit_per_contract=spread.entry_debit_per_contract,
+        contracts=spread.contracts,
+        long_symbol=spread.long_symbol,
+        short_symbol=spread.short_symbol,
     )
