@@ -147,12 +147,14 @@ def test_take_profit_submits_single_mleg_close_for_existing_spread():
     assert result.reason == "take_profit_exit_submitted"
     assert result.broker_order_id == "exit-order-001"
     assert result.expected_return_percent == Decimal("25.00")
+    assert result.observed_close_credit == Decimal("0.75")
+    assert result.submitted_limit_credit == Decimal("0.73")
     assert len(trading_client.orders) == 1
 
     order = trading_client.orders[0]
     assert order.order_class == OrderClass.MLEG
     assert order.qty == 1
-    assert order.limit_price == -0.75
+    assert order.limit_price == -0.73
 
     long_leg, short_leg = order.legs
     assert long_leg.side == OrderSide.SELL
@@ -176,6 +178,7 @@ def test_stop_loss_submits_risk_reducing_close_before_new_entry():
     assert result.submitted
     assert result.reason == "stop_loss_exit_submitted"
     assert result.expected_return_percent == Decimal("-50.00")
+    assert result.submitted_limit_credit == Decimal("0.30")
 
 
 def test_no_exit_when_executable_return_is_inside_thresholds():
