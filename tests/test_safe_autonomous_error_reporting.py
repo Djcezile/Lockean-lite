@@ -41,6 +41,14 @@ def _open_clock():
     )
 
 
+def _api_error(message, *, code=None):
+    APIError = type("APIError", (Exception,), {})
+    error = APIError(message)
+    if code is not None:
+        error.code = code
+    return error
+
+
 def test_session_logs_machine_safe_value_error_reason():
     output = []
 
@@ -95,9 +103,7 @@ def test_session_redacts_free_form_value_error_text():
 
 
 def test_alpaca_api_error_gets_specific_sanitized_reason():
-    APIError = type("APIError", (Exception,), {})
-    error = APIError("sensitive broker payload")
-    error.code = 42210000
+    error = _api_error("sensitive broker payload", code=42210000)
 
     reason = safe_exception_reason(error)
 
@@ -106,10 +112,46 @@ def test_alpaca_api_error_gets_specific_sanitized_reason():
 
 
 def test_alpaca_api_error_without_code_stays_specific_but_redacted():
-    APIError = type("APIError", (Exception,), {})
-    error = APIError("secret response body")
+    error = _api_error("secret response body")
 
     reason = safe_exception_reason(error)
 
     assert reason == "alpaca_api_error"
     assert "secret" not in reason
+
+
+def test_invalid_limit_price_is_classified_without_leaking_order_details():
+    error = _api_error(
+        "invalid limit price 0.12345 for account SECRET and SPY option",
+        code=42210000,
+    )
+
+    reason = safe_exception_reason(error)
+
+    assert reason == "alpaca_invalid_limit_price"
+    assert "SECRET" not in reason
+    assert "SPY" not in reason
+
+
+def test_position_intent_error_is_classified_without_raw_broker_text():
+    error = _api_error(
+        "leg.0 position intent is required for a multi-leg order",
+        code=42210000,
+    )
+
+    reason = safe_exception_reason(error)
+
+    assert reason == "alpaca_position_intent_invalid"
+    assert "leg.0" not in reason
+
+
+def test_options_eligibility_error_gets_static_reason():
+    error = _api_error(
+        "account not eligible to trade options spreads: private details",
+        code=40310000,
+    )
+
+    reason = safe_exception_reason(error)
+
+    assert reason == "alpaca_options_eligibility_rejected"
+    assert "private" not in reason
