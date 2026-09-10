@@ -100,13 +100,13 @@ def test_openai_model_uses_strict_recommendation_schema():
     ] is False
 
     assert set(schema["required"]) == {
-    "decision",
-    "symbol",
-    "expiration",
-    "buy_strike",
-    "sell_strike",
-    "contracts",
-}
+        "decision",
+        "symbol",
+        "expiration",
+        "buy_strike",
+        "sell_strike",
+        "contracts",
+    }
 
 
 def test_openai_model_fails_closed_on_empty_response():
@@ -141,6 +141,7 @@ def test_openai_model_translates_api_failure_into_lockean_reason():
         model(
             "recommend a spread"
         )
+
 
 def test_openai_model_schema_supports_trade_or_no_trade_decision():
     client = FakeClient()
@@ -215,7 +216,10 @@ def test_openai_model_schema_supports_trade_or_no_trade_decision():
             "integer",
             "null",
         ],
-        "minimum": 1,
+        "enum": [
+            1,
+            None,
+        ],
     }
 
     assert (
