@@ -7,6 +7,7 @@ SAFE_REASON_CHARACTERS = frozenset(
 
 
 ALPACA_MESSAGE_CLASSIFIERS = (
+    ("internal server error", "alpaca_internal_server_error"),
     ("invalid limit price", "alpaca_invalid_limit_price"),
     ("invalid limit_price", "alpaca_invalid_limit_price"),
     ("position intent", "alpaca_position_intent_invalid"),
@@ -53,6 +54,14 @@ def _classify_alpaca_message(error: Exception) -> str | None:
     return None
 
 
+def _safe_exception_attribute(error: Exception, name: str):
+    """Read an exception attribute without allowing a broken property to escape."""
+    try:
+        return getattr(error, name, None)
+    except Exception:
+        return None
+
+
 def safe_exception_reason(error: Exception) -> str:
     """Return a machine-safe reason without leaking free-form exception text."""
     error_type = type(error).__name__
@@ -62,16 +71,19 @@ def safe_exception_reason(error: Exception) -> str:
         if classified_reason is not None:
             return classified_reason
 
-        code = getattr(error, "code", None)
+        # Alpaca's APIError.code property can itself raise KeyError when the
+        # broker returns a response body without a numeric `code` field (for
+        # example some HTTP 5xx responses). Error reporting must never turn a
+        # transient broker failure into a fatal Lockean session failure.
+        code = _safe_exception_attribute(error, "code")
         if code is not None:
             safe_code = str(code).strip()
             if _is_safe_reason(safe_code):
                 return f"alpaca_api_error:{safe_code}"
 
-        status_code = getattr(
+        status_code = _safe_exception_attribute(
             error,
             "status_code",
-            None,
         )
         if status_code is not None:
             safe_status = str(status_code).strip()
