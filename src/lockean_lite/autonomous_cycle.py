@@ -25,6 +25,43 @@ class AutonomousTradeCycleResult:
     diagnostics: tuple[str, ...] = ()
 
 
+def _agent_diagnostics(
+    *,
+    recommendation_provider,
+    market_context: dict[str, str],
+    recommendation,
+) -> tuple[str, ...]:
+    context_text = ";".join(
+        f"{key}={value}"
+        for key, value in market_context.items()
+    )
+
+    decision = getattr(
+        recommendation_provider,
+        "last_decision",
+        None,
+    )
+
+    if decision is None:
+        decision = (
+            "NO_TRADE"
+            if recommendation is None
+            else "TRADE"
+        )
+
+    rationale = getattr(
+        recommendation_provider,
+        "last_decision_rationale",
+        None,
+    ) or "not_provided"
+
+    return (
+        f"agent_context={context_text}",
+        f"agent_decision={decision}",
+        f"agent_rationale={rationale}",
+    )
+
+
 def run_autonomous_trade_cycle(
     *,
     spy_evidence,
@@ -35,10 +72,12 @@ def run_autonomous_trade_cycle(
     authority,
     execution_gateway,
     proposal_policy_checker=None,
+    intraday_context: dict[str, str] | None = None,
 ) -> AutonomousTradeCycleResult:
     market_context = build_agent_market_context(
         spy_evidence=spy_evidence,
         vix_evidence=vix_evidence,
+        intraday_context=intraday_context,
     )
 
     candidate_quotes = (
@@ -50,10 +89,17 @@ def run_autonomous_trade_cycle(
         market_context=market_context,
     )
 
+    diagnostics = _agent_diagnostics(
+        recommendation_provider=recommendation_provider,
+        market_context=market_context,
+        recommendation=recommendation,
+    )
+
     if recommendation is None:
         return AutonomousTradeCycleResult(
             status="NO_TRADE",
             reason="agent_declined_trade",
+            diagnostics=diagnostics,
         )
 
     # Session portfolio capacity is counted in spread units. One autonomous
@@ -63,6 +109,7 @@ def run_autonomous_trade_cycle(
         return AutonomousTradeCycleResult(
             status="REJECTED",
             reason="autonomous_contract_quantity_must_be_one",
+            diagnostics=diagnostics,
         )
 
     try:
@@ -76,6 +123,7 @@ def run_autonomous_trade_cycle(
         return AutonomousTradeCycleResult(
             status="REJECTED",
             reason=str(error),
+            diagnostics=diagnostics,
         )
 
     if proposal_policy_checker is not None:
@@ -88,6 +136,7 @@ def run_autonomous_trade_cycle(
             return AutonomousTradeCycleResult(
                 status="REJECTED",
                 reason=policy_decision.reason,
+                diagnostics=diagnostics,
             )
 
     evidence_validation_result = (
@@ -102,6 +151,7 @@ def run_autonomous_trade_cycle(
         return AutonomousTradeCycleResult(
             status="REJECTED",
             reason=evidence_validation_result.reason,
+            diagnostics=diagnostics,
         )
 
     account_snapshot = (
@@ -124,4 +174,5 @@ def run_autonomous_trade_cycle(
         execution_proof=(
             cycle_result.execution_proof
         ),
+        diagnostics=diagnostics,
     )
