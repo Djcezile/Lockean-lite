@@ -49,6 +49,9 @@ RECOMMENDATION_SCHEMA = {
                 None,
             ],
         },
+        "rationale": {
+            "type": "string",
+        },
     },
     "required": [
         "decision",
@@ -57,6 +60,7 @@ RECOMMENDATION_SCHEMA = {
         "buy_strike",
         "sell_strike",
         "contracts",
+        "rationale",
     ],
     "additionalProperties": False,
 }
