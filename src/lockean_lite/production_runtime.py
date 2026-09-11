@@ -38,6 +38,9 @@ from lockean_lite.evidence_ingestion import (
 from lockean_lite.execution_gateway import (
     PaperExecutionGateway,
 )
+from lockean_lite.intraday_market_context import (
+    read_spy_intraday_context,
+)
 from lockean_lite.lockean_authority import (
     LockeanAuthority,
 )
@@ -46,6 +49,9 @@ from lockean_lite.openai_recommendation_model import (
 )
 from lockean_lite.paper_portfolio_snapshot import (
     read_live_paper_portfolio_snapshot,
+)
+from lockean_lite.safe_error_reporting import (
+    safe_exception_reason,
 )
 from lockean_lite.vix_history_source import (
     ResilientVixHistorySource,
@@ -132,9 +138,29 @@ def run_live_production_autonomous_cycle(
         )
     )
 
+    try:
+        intraday_context = read_spy_intraday_context(
+            client=stock_client,
+        )
+        intraday_diagnostic = (
+            "intraday_context=available:alpaca_iex_minute"
+        )
+    except Exception as error:
+        intraday_reason = safe_exception_reason(error)
+        intraday_context = {
+            "intraday_status": "UNAVAILABLE",
+            "intraday_source": "unavailable",
+            "intraday_error": intraday_reason,
+        }
+        intraday_diagnostic = (
+            "intraday_context=unavailable:"
+            f"{intraday_reason}"
+        )
+
     result = run_production_autonomous_cycle(
         spy_evidence=spy_evidence,
         vix_evidence=vix_evidence,
+        intraday_context=intraday_context,
         expiration=expiration,
         maximum_allowed_loss=(
             maximum_allowed_loss
@@ -154,13 +180,19 @@ def run_live_production_autonomous_cycle(
     )
 
     if isinstance(result, AutonomousTradeCycleResult):
-        diagnostic = (
+        vix_diagnostic = (
             f"vix_source={vix_read.mode}:"
             f"cache_age_seconds={vix_read.cache_age_seconds}"
         )
         return replace(
             result,
-            diagnostics=result.diagnostics + (diagnostic,),
+            diagnostics=(
+                result.diagnostics
+                + (
+                    vix_diagnostic,
+                    intraday_diagnostic,
+                )
+            ),
         )
 
     return result
@@ -177,6 +209,7 @@ def run_production_autonomous_cycle(
     strike_window: Decimal = DEFAULT_STRIKE_WINDOW,
     agent_activity_mode: str = "balanced",
     maximum_same_structure_units: int = DEFAULT_MAXIMUM_SAME_STRUCTURE_UNITS,
+    intraday_context: dict[str, str] | None = None,
 ):
     if not authorization_signing_key:
         raise ValueError(
@@ -298,6 +331,7 @@ def run_production_autonomous_cycle(
     return run_autonomous_trade_cycle(
         spy_evidence=spy_evidence,
         vix_evidence=vix_evidence,
+        intraday_context=intraday_context,
         candidate_quotes_provider=(
             candidate_quotes_provider
         ),
