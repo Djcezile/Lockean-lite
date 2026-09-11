@@ -39,6 +39,27 @@ SUPPORTED_ACTIVITY_MODES = frozenset(
     }
 )
 
+MAX_RATIONALE_LENGTH = 240
+
+
+def _normalize_rationale(value: str | None) -> str:
+    if value is None:
+        return "not_provided"
+
+    if not isinstance(value, str):
+        raise ValueError(
+            "ai_recommendation_schema_invalid"
+        )
+
+    normalized = " ".join(value.split())
+
+    if not normalized:
+        raise ValueError(
+            "ai_recommendation_schema_invalid"
+        )
+
+    return normalized[:MAX_RATIONALE_LENGTH]
+
 
 def build_recommendation_prompt(
     *,
@@ -141,12 +162,17 @@ def build_recommendation_prompt(
         "expiration\n"
         "buy_strike\n"
         "sell_strike\n"
-        "contracts\n\n"
+        "contracts\n"
+        "rationale\n\n"
         "For decision=NO_TRADE, symbol, expiration, "
         "buy_strike, sell_strike, and contracts "
         "must all be null.\n"
         "For decision=TRADE, populate those fields using "
-        "only the candidate options below.\n\n"
+        "only the candidate options below.\n"
+        "rationale must be one short sentence explaining the "
+        "market evidence behind your decision. Do not include "
+        "permission, broker instructions, or independent risk "
+        "calculations in the rationale.\n\n"
         "Do not return pricing, risk calculations, "
         "permission decisions, or broker instructions.\n"
         f"{policy_context}"
@@ -180,6 +206,8 @@ class StructuredAIRecommendationProvider:
         )
         self.model_callable = model_callable
         self.activity_mode = activity_mode
+        self.last_decision: str | None = None
+        self.last_decision_rationale: str | None = None
 
     def __call__(
         self,
@@ -189,6 +217,9 @@ class StructuredAIRecommendationProvider:
         ],
         market_context: dict[str, str] | None = None,
     ) -> SpreadRecommendation | None:
+        self.last_decision = None
+        self.last_decision_rationale = None
+
         proposal_id = (
             self.proposal_id_provider()
         )
@@ -219,9 +250,24 @@ class StructuredAIRecommendationProvider:
                 "ai_recommendation_invalid_json"
             ) from error
 
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                "ai_recommendation_schema_invalid"
+            )
+
+        rationale = _normalize_rationale(
+            parsed.get("rationale")
+        )
+
+        if "rationale" in parsed:
+            parsed = {
+                key: value
+                for key, value in parsed.items()
+                if key != "rationale"
+            }
+
         if (
-            isinstance(parsed, dict)
-            and frozenset(parsed.keys())
+            frozenset(parsed.keys())
             == NO_TRADE_RESPONSE_FIELDS
         ):
             decision = parsed["decision"]
@@ -243,6 +289,8 @@ class StructuredAIRecommendationProvider:
                         "ai_recommendation_schema_invalid"
                     )
 
+                self.last_decision = "NO_TRADE"
+                self.last_decision_rationale = rationale
                 return None
 
             if decision == "TRADE":
@@ -250,6 +298,8 @@ class StructuredAIRecommendationProvider:
                     field: parsed[field]
                     for field in REQUIRED_RESPONSE_FIELDS
                 }
+                self.last_decision = "TRADE"
+                self.last_decision_rationale = rationale
 
             else:
                 raise ValueError(
@@ -257,8 +307,7 @@ class StructuredAIRecommendationProvider:
                 )
 
         if (
-            not isinstance(parsed, dict)
-            or frozenset(parsed.keys())
+            frozenset(parsed.keys())
             != REQUIRED_RESPONSE_FIELDS
         ):
             raise ValueError(
@@ -300,6 +349,10 @@ class StructuredAIRecommendationProvider:
             raise ValueError(
                 "ai_recommendation_schema_invalid"
             ) from error
+
+        if self.last_decision is None:
+            self.last_decision = "TRADE"
+            self.last_decision_rationale = rationale
 
         return SpreadRecommendation(
             proposal_id=proposal_id,
