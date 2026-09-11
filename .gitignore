@@ -10,3 +10,8 @@ dist/
 build/
 *.egg-info/
 *.pyproj.user
+# Local autonomous-session logs
+logs/
+
+# Generated submission videos
+docs/demo_evidence/*.mp4
