@@ -74,11 +74,17 @@ def run_autonomous_trade_cycle(
     proposal_policy_checker=None,
     intraday_context: dict[str, str] | None = None,
 ) -> AutonomousTradeCycleResult:
-    market_context = build_agent_market_context(
-        spy_evidence=spy_evidence,
-        vix_evidence=vix_evidence,
-        intraday_context=intraday_context,
-    )
+    if intraday_context is None:
+        market_context = build_agent_market_context(
+            spy_evidence=spy_evidence,
+            vix_evidence=vix_evidence,
+        )
+    else:
+        market_context = build_agent_market_context(
+            spy_evidence=spy_evidence,
+            vix_evidence=vix_evidence,
+            intraday_context=intraday_context,
+        )
 
     candidate_quotes = (
         candidate_quotes_provider()
