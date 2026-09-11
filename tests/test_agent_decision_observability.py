@@ -85,7 +85,7 @@ def test_provider_bounds_multiline_rationale_for_safe_log_output():
           "buy_strike": null,
           "sell_strike": null,
           "contracts": null,
-          "rationale": "First line.\nSecond line."
+          "rationale": "First line.\\nSecond line."
         }
         """,
     )
