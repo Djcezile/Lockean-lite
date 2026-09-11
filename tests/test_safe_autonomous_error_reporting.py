@@ -49,6 +49,19 @@ def _api_error(message, *, code=None):
     return error
 
 
+def _api_error_with_broken_code_property(message, *, status_code=None):
+    class APIError(Exception):
+        @property
+        def code(self):
+            raise KeyError("code")
+
+        @property
+        def status_code(self):
+            return status_code
+
+    return APIError(message)
+
+
 def test_session_logs_machine_safe_value_error_reason():
     output = []
 
@@ -118,6 +131,28 @@ def test_alpaca_api_error_without_code_stays_specific_but_redacted():
 
     assert reason == "alpaca_api_error"
     assert "secret" not in reason
+
+
+def test_alpaca_internal_server_error_is_classified_before_broken_code_property():
+    error = _api_error_with_broken_code_property(
+        '{"message":"Internal Server Error"}',
+        status_code=500,
+    )
+
+    reason = safe_exception_reason(error)
+
+    assert reason == "alpaca_internal_server_error"
+
+
+def test_alpaca_broken_code_property_falls_back_to_status_without_crashing():
+    error = _api_error_with_broken_code_property(
+        "opaque broker failure",
+        status_code=500,
+    )
+
+    reason = safe_exception_reason(error)
+
+    assert reason == "alpaca_api_error_status:500"
 
 
 def test_invalid_limit_price_is_classified_without_leaking_order_details():
