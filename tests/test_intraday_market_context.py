@@ -64,7 +64,7 @@ def test_intraday_context_exposes_live_multi_horizon_spy_returns():
     assert result["intraday_direction_5m"] == "UP"
     assert result["intraday_direction_15m"] == "UP"
     assert result["intraday_direction_30m"] == "UP"
-    assert result["intraday_return_since_open_pct"] == "30.000"
+    assert result["intraday_return_lookback_pct"] == "30.000"
     assert client.request is not None
 
 
@@ -94,4 +94,4 @@ def test_intraday_context_reports_warming_up_without_inventing_missing_horizons(
     assert result["intraday_return_15m_pct"] == "NA"
     assert result["intraday_return_30m_pct"] == "NA"
     assert result["intraday_direction_5m"] == "NA"
-    assert result["intraday_return_since_open_pct"] == "2.000"
+    assert result["intraday_return_lookback_pct"] == "2.000"
