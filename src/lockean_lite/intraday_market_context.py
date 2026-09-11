@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -9,6 +9,8 @@ from alpaca.data.timeframe import TimeFrame
 
 
 NEW_YORK = ZoneInfo("America/New_York")
+REGULAR_SESSION_OPEN = time(9, 30)
+REGULAR_SESSION_CLOSE = time(16, 0)
 _PERCENT_QUANTUM = Decimal("0.001")
 
 
@@ -65,15 +67,20 @@ def read_spy_intraday_context(
     raw_bars = tuple(response.data.get("SPY", ()))
     current_session = current_time.astimezone(NEW_YORK).date()
 
-    bars = tuple(
-        bar
-        for bar in raw_bars
+    bars = []
+
+    for bar in raw_bars:
+        local_timestamp = bar.timestamp.astimezone(NEW_YORK)
+        local_time = local_timestamp.time().replace(tzinfo=None)
+
         if (
-            bar.timestamp.astimezone(NEW_YORK).date()
-            == current_session
+            local_timestamp.date() == current_session
+            and REGULAR_SESSION_OPEN <= local_time <= REGULAR_SESSION_CLOSE
             and bar.timestamp <= current_time
-        )
-    )
+        ):
+            bars.append(bar)
+
+    bars = tuple(bars)
 
     if not bars:
         raise ValueError("intraday_spy_bars_unavailable")
@@ -84,7 +91,7 @@ def read_spy_intraday_context(
     )
 
     latest_close = closes[-1]
-    since_open = _percent_change(
+    lookback_return = _percent_change(
         latest_close,
         closes[0],
     )
@@ -111,8 +118,8 @@ def read_spy_intraday_context(
         "intraday_as_of": bars[-1].timestamp.isoformat(),
         "intraday_bar_count": str(len(bars)),
         "intraday_spy_close": str(latest_close),
-        "intraday_return_since_open_pct": _format_percent(
-            since_open
+        "intraday_return_lookback_pct": _format_percent(
+            lookback_return
         ),
         "intraday_return_5m_pct": _format_percent(
             return_5m
