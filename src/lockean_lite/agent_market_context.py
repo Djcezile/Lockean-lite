@@ -10,8 +10,9 @@ def build_agent_market_context(
     *,
     spy_evidence,
     vix_evidence,
+    intraday_context: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    return {
+    context = {
         "spy_close": str(
             spy_evidence.bars[-1].close
         ),
@@ -47,3 +48,8 @@ def build_agent_market_context(
             else "FAIL"
         ),
     }
+
+    if intraday_context is not None:
+        context.update(intraday_context)
+
+    return context
