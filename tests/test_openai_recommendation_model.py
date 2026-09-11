@@ -14,7 +14,8 @@ VALID_RESPONSE = """
   "expiration": "2026-09-18",
   "buy_strike": "782",
   "sell_strike": "787",
-  "contracts": 1
+  "contracts": 1,
+  "rationale": "Daily and intraday evidence support a defined-risk bullish trade."
 }
 """.strip()
 
@@ -106,6 +107,7 @@ def test_openai_model_uses_strict_recommendation_schema():
         "buy_strike",
         "sell_strike",
         "contracts",
+        "rationale",
     }
 
 
@@ -177,6 +179,7 @@ def test_openai_model_schema_supports_trade_or_no_trade_decision():
         "buy_strike",
         "sell_strike",
         "contracts",
+        "rationale",
     }
 
     assert schema["properties"]["symbol"] == {
@@ -220,6 +223,10 @@ def test_openai_model_schema_supports_trade_or_no_trade_decision():
             1,
             None,
         ],
+    }
+
+    assert schema["properties"]["rationale"] == {
+        "type": "string",
     }
 
     assert (
