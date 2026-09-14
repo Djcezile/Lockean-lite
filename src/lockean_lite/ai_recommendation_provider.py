@@ -119,6 +119,24 @@ def build_recommendation_prompt(
             + "\n"
         )
 
+    judgment_context = ""
+
+    if activity_mode == "balanced":
+        judgment_context = (
+            "\nBALANCED JUDGMENT:\n"
+            "Treat all supplied daily and intraday market indicators "
+            "as evidence to weigh together, not as independent hard "
+            "vetoes or automatic trade triggers.\n"
+            "A single FAIL, or any fixed combination of FAIL values, "
+            "does not automatically require decision=NO_TRADE.\n"
+            "Likewise, positive intraday momentum does not "
+            "automatically require decision=TRADE.\n"
+            "Choose TRADE or NO_TRADE from the combined market "
+            "evidence and candidate quality. Preserve uncertainty: "
+            "NO_TRADE remains appropriate when the combined evidence "
+            "does not justify a defined-risk bullish position.\n"
+        )
+
     activity_context = ""
 
     if activity_mode == "active_paper":
@@ -177,6 +195,7 @@ def build_recommendation_prompt(
         "permission decisions, or broker instructions.\n"
         f"{policy_context}"
         f"{market_context_text}"
+        f"{judgment_context}"
         f"{activity_context}\n"
         f"proposal_reference={proposal_id}\n\n"
         "CANDIDATES:\n"
