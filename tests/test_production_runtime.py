@@ -121,7 +121,7 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         return fake_quotes
 
     monkeypatch.setattr(
-        "lockean_lite.production_runtime.read_spy_call_candidate_quotes",
+        "lockean_lite.production_runtime.read_spy_directional_candidate_quotes",
         fake_candidate_reader,
     )
 
