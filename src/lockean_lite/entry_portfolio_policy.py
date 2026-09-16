@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from lockean_lite.position_exit_manager import (
-    identify_managed_bull_call_spreads,
+    identify_managed_debit_spreads,
 )
 
 
@@ -63,6 +63,12 @@ def evaluate_entry_proposal_policy(
     buy_leg = buy_legs[0]
     sell_leg = sell_legs[0]
 
+    if buy_leg.option_type != sell_leg.option_type:
+        return EntryProposalPolicyDecision(
+            allowed=False,
+            reason="entry_proposal_option_type_mismatch",
+        )
+
     buy_symbol = _matching_contract_symbol(
         proposal=proposal,
         leg=buy_leg,
@@ -120,10 +126,11 @@ def evaluate_entry_proposal_policy(
     expiration_code = buy_leg.expiration.strftime("%y%m%d")
     same_structure_units = sum(
         spread.contracts
-        for spread in identify_managed_bull_call_spreads(snapshot)
+        for spread in identify_managed_debit_spreads(snapshot)
         if (
             spread.underlying == proposal.symbol
             and spread.expiration_code == expiration_code
+            and spread.option_type == buy_leg.option_type
             and spread.long_strike == buy_leg.strike
             and spread.short_strike == sell_leg.strike
         )
