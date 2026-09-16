@@ -17,6 +17,12 @@ from lockean_lite.paper_portfolio_snapshot import (
 )
 
 
+_OCC_OPTION_PATTERN = re.compile(
+    r"^([A-Z]+)(\d{6})([CP])(\d{8})$"
+)
+
+# Preserve the original symbol parser constant for compatibility with any
+# external diagnostics while the exit engine itself becomes directional.
 _OCC_CALL_PATTERN = re.compile(
     r"^([A-Z]+)(\d{6})C(\d{8})$"
 )
@@ -32,6 +38,7 @@ class ManagedBullCallSpread:
     short_strike: Decimal
     contracts: int
     entry_debit_per_contract: Decimal
+    option_type: str = "call"
 
 
 @dataclass(frozen=True)
@@ -51,17 +58,38 @@ class PaperSpreadExitResult:
     short_symbol: str | None = None
 
 
-def _parse_call_contract(
+def _parse_option_contract(
     symbol: str,
-) -> tuple[str, str, Decimal] | None:
-    match = _OCC_CALL_PATTERN.fullmatch(symbol)
+) -> tuple[str, str, str, Decimal] | None:
+    match = _OCC_OPTION_PATTERN.fullmatch(symbol)
 
     if match is None:
         return None
 
     underlying = match.group(1)
     expiration_code = match.group(2)
-    strike = Decimal(match.group(3)) / Decimal("1000")
+    option_type = (
+        "call"
+        if match.group(3) == "C"
+        else "put"
+    )
+    strike = Decimal(match.group(4)) / Decimal("1000")
+
+    return underlying, expiration_code, option_type, strike
+
+
+def _parse_call_contract(
+    symbol: str,
+) -> tuple[str, str, Decimal] | None:
+    parsed = _parse_option_contract(symbol)
+
+    if parsed is None:
+        return None
+
+    underlying, expiration_code, option_type, strike = parsed
+
+    if option_type != "call":
+        return None
 
     return underlying, expiration_code, strike
 
@@ -96,18 +124,31 @@ def _allocated_cost_basis(
     )
 
 
-def identify_managed_bull_call_spreads(
+def _short_matches_long_vertical(
+    *,
+    option_type: str,
+    long_strike: Decimal,
+    short_strike: Decimal,
+) -> bool:
+    if option_type == "call":
+        return short_strike > long_strike
+    if option_type == "put":
+        return short_strike < long_strike
+    return False
+
+
+def identify_managed_debit_spreads(
     snapshot: PaperPortfolioSnapshot,
 ) -> tuple[ManagedBullCallSpread, ...]:
     long_positions: list[
-        tuple[PaperPositionSnapshot, str, str, Decimal]
+        tuple[PaperPositionSnapshot, str, str, str, Decimal]
     ] = []
     short_positions: list[
-        tuple[PaperPositionSnapshot, str, str, Decimal]
+        tuple[PaperPositionSnapshot, str, str, str, Decimal]
     ] = []
 
     for position in snapshot.positions:
-        parsed = _parse_call_contract(position.symbol)
+        parsed = _parse_option_contract(position.symbol)
 
         if parsed is None:
             continue
@@ -115,11 +156,12 @@ def identify_managed_bull_call_spreads(
         if _integral_contract_quantity(position) is None:
             continue
 
-        underlying, expiration_code, strike = parsed
+        underlying, expiration_code, option_type, strike = parsed
         item = (
             position,
             underlying,
             expiration_code,
+            option_type,
             strike,
         )
 
@@ -129,16 +171,16 @@ def identify_managed_bull_call_spreads(
             short_positions.append(item)
 
     long_positions.sort(
-        key=lambda item: (item[1], item[2], item[3])
+        key=lambda item: (item[1], item[2], item[3], item[4])
     )
     short_positions.sort(
-        key=lambda item: (item[1], item[2], item[3])
+        key=lambda item: (item[1], item[2], item[3], item[4])
     )
 
     # Alpaca aggregates identical option symbols. One long symbol can
     # therefore represent inventory belonging to several verticals.
-    # Reconstruct those verticals by allocating integer contract inventory
-    # to the nearest higher-strike shorts.
+    # Reconstruct by allocating integer inventory to the nearest valid
+    # same-type short strike: higher for calls, lower for puts.
     short_remaining = [
         _integral_contract_quantity(item[0]) or 0
         for item in short_positions
@@ -149,6 +191,7 @@ def identify_managed_bull_call_spreads(
         long_position,
         underlying,
         expiration_code,
+        option_type,
         long_strike,
     ) in long_positions:
         long_remaining = (
@@ -163,19 +206,32 @@ def identify_managed_bull_call_spreads(
                     short_remaining[index] > 0
                     and item[1] == underlying
                     and item[2] == expiration_code
-                    and item[3] > long_strike
+                    and item[3] == option_type
+                    and _short_matches_long_vertical(
+                        option_type=option_type,
+                        long_strike=long_strike,
+                        short_strike=item[4],
+                    )
                 )
             ]
 
             if not matches:
                 break
 
-            short_index = min(
-                matches,
-                key=lambda index: short_positions[index][3],
-            )
+            if option_type == "call":
+                short_index = min(
+                    matches,
+                    key=lambda index: short_positions[index][4],
+                )
+            else:
+                short_index = max(
+                    matches,
+                    key=lambda index: short_positions[index][4],
+                )
+
             (
                 short_position,
+                _,
                 _,
                 _,
                 short_strike,
@@ -215,6 +271,7 @@ def identify_managed_bull_call_spreads(
                         entry_debit_per_contract=(
                             entry_debit_per_contract
                         ),
+                        option_type=option_type,
                     )
                 )
 
@@ -222,6 +279,16 @@ def identify_managed_bull_call_spreads(
             short_remaining[short_index] -= contracts
 
     return tuple(spreads)
+
+
+def identify_managed_bull_call_spreads(
+    snapshot: PaperPortfolioSnapshot,
+) -> tuple[ManagedBullCallSpread, ...]:
+    return tuple(
+        spread
+        for spread in identify_managed_debit_spreads(snapshot)
+        if spread.option_type == "call"
+    )
 
 
 def _read_executable_close_credit(
@@ -299,9 +366,6 @@ def _take_profit_limit_credit(
         rounding=ROUND_CEILING,
     )
 
-    # The trigger may mathematically satisfy the threshold while cent
-    # rounding places target_credit one cent above the observed executable
-    # credit. Never make a submitted limit less executable in that case.
     target_credit = min(target_credit, observed_close_credit)
 
     conceded_credit = (
@@ -451,7 +515,7 @@ def run_paper_spread_exit_cycle(
             cancelled_order_ids=tuple(cancelled_ids),
         )
 
-    spreads = identify_managed_bull_call_spreads(snapshot)
+    spreads = identify_managed_debit_spreads(snapshot)
 
     if not spreads:
         return PaperSpreadExitResult(
@@ -469,9 +533,6 @@ def run_paper_spread_exit_cycle(
         )
 
         if spread_structure in pending_exit_structures:
-            # This exact vertical already has a live risk-reducing order.
-            # A different vertical may share one aggregated Alpaca leg and
-            # must remain independently manageable.
             continue
 
         try:
@@ -543,8 +604,6 @@ def run_paper_spread_exit_cycle(
             price_concession=take_profit_price_concession,
         )
     else:
-        # Stop exits already filled reliably in live paper testing. Preserve
-        # the observed executable credit rather than adding needless slippage.
         submitted_limit_credit = close_credit
 
     submitted_limit_return = _expected_return_percent(
