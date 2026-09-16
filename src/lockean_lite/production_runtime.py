@@ -22,7 +22,7 @@ from lockean_lite.alpaca_credentials import (
     load_alpaca_credentials_from_environment,
 )
 from lockean_lite.alpaca_option_quote_adapter import (
-    read_spy_call_candidate_quotes,
+    read_spy_directional_candidate_quotes,
 )
 from lockean_lite.autonomous_cycle import (
     AutonomousTradeCycleResult,
@@ -251,8 +251,6 @@ def run_production_autonomous_cycle(
         ),
     }
 
-    # Preserve the legacy balanced constructor shape for
-    # existing integrations; active mode is opt-in.
     if agent_activity_mode != "balanced":
         provider_kwargs["activity_mode"] = (
             agent_activity_mode
@@ -283,7 +281,7 @@ def run_production_autonomous_cycle(
     )
 
     def candidate_quotes_provider():
-        return read_spy_call_candidate_quotes(
+        return read_spy_directional_candidate_quotes(
             trading_client=trading_client,
             option_data_client=(
                 option_data_client
