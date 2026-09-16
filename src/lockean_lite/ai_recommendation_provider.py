@@ -21,6 +21,11 @@ REQUIRED_RESPONSE_FIELDS = frozenset(
     }
 )
 
+DIRECTIONAL_REQUIRED_RESPONSE_FIELDS = frozenset(
+    set(REQUIRED_RESPONSE_FIELDS)
+    | {"option_type"}
+)
+
 NO_TRADE_RESPONSE_FIELDS = frozenset(
     {
         "decision",
@@ -32,10 +37,22 @@ NO_TRADE_RESPONSE_FIELDS = frozenset(
     }
 )
 
+DIRECTIONAL_NO_TRADE_RESPONSE_FIELDS = frozenset(
+    set(NO_TRADE_RESPONSE_FIELDS)
+    | {"option_type"}
+)
+
 SUPPORTED_ACTIVITY_MODES = frozenset(
     {
         "balanced",
         "active_paper",
+    }
+)
+
+SUPPORTED_OPTION_TYPES = frozenset(
+    {
+        "call",
+        "put",
     }
 )
 
@@ -82,6 +99,7 @@ def build_recommendation_prompt(
     for quote in candidate_quotes:
         candidate_lines.append(
             (
+                f"option_type={quote.option_type}, "
                 f"strike={quote.strike}, "
                 f"bid={quote.bid_price}, "
                 f"ask={quote.ask_price}, "
@@ -129,12 +147,16 @@ def build_recommendation_prompt(
             "vetoes or automatic trade triggers.\n"
             "A single FAIL, or any fixed combination of FAIL values, "
             "does not automatically require decision=NO_TRADE.\n"
-            "Likewise, positive intraday momentum does not "
+            "Likewise, positive or negative intraday momentum does not "
             "automatically require decision=TRADE.\n"
+            "If the combined evidence is bullish, you may choose a "
+            "defined-risk bull call debit spread. If the combined "
+            "evidence is bearish, you may choose a defined-risk bear "
+            "put debit spread.\n"
             "Choose TRADE or NO_TRADE from the combined market "
             "evidence and candidate quality. Preserve uncertainty: "
-            "NO_TRADE remains appropriate when the combined evidence "
-            "does not justify a defined-risk bullish position.\n"
+            "NO_TRADE remains appropriate when neither direction "
+            "justifies a defined-risk position.\n"
         )
 
     activity_context = ""
@@ -146,11 +168,13 @@ def build_recommendation_prompt(
             "exercise the complete autonomous trading loop and "
             "collect realistic paper performance data while all "
             "Lockean limits remain unchanged.\n"
-            "Prefer decision=TRADE when at least one candidate "
-            "pair forms a sensible defined-risk bull call spread, "
-            "its quoted debit appears likely to fit the supplied "
-            "maximum-loss context, and the market context is not "
-            "strongly adverse.\n"
+            "Prefer decision=TRADE when at least one candidate pair "
+            "forms a sensible defined-risk debit vertical, its quoted "
+            "debit appears likely to fit the supplied maximum-loss "
+            "context, and the directional market evidence supports "
+            "the structure.\n"
+            "Use a bull call debit spread for bullish evidence and a "
+            "bear put debit spread for bearish evidence.\n"
             "Treat individual PASS/FAIL market signals as context, "
             "not independent hard vetoes. A single FAIL does not "
             "by itself require NO_TRADE.\n"
@@ -158,8 +182,8 @@ def build_recommendation_prompt(
             "spreads and narrower strike widths when several "
             "choices are comparable.\n"
             "Use decision=NO_TRADE when the candidates are clearly "
-            "poor, structurally unsuitable, or the combined market "
-            "evidence is materially adverse.\n"
+            "poor, structurally unsuitable, directionally ambiguous, "
+            "or the combined market evidence is materially adverse.\n"
             "You still have no permission or broker authority. "
             "Lockean independently reconstructs pricing and risk "
             "and may reject any proposal.\n"
@@ -168,9 +192,15 @@ def build_recommendation_prompt(
     return (
         "You are the trading agent.\n\n"
         "You decide whether the market opportunity "
-        "justifies a trade.\n\n"
-        "If you want to propose a defined-risk SPY bull "
-        "call spread using the candidate options below, "
+        "justifies a trade and, if so, its direction.\n\n"
+        "You may propose exactly one defined-risk SPY debit vertical "
+        "using the candidate options below: a bullish bull call spread "
+        "or a bearish bear put spread.\n"
+        "For a bull call, set option_type=call, buy the lower strike, "
+        "and sell the higher strike.\n"
+        "For a bear put, set option_type=put, buy the higher strike, "
+        "and sell the lower strike.\n"
+        "If you want to propose one of those structures, "
         "set decision=TRADE.\n"
         "If you do not want to trade, "
         "set decision=NO_TRADE.\n\n"
@@ -181,15 +211,15 @@ def build_recommendation_prompt(
         "buy_strike\n"
         "sell_strike\n"
         "contracts\n"
+        "option_type\n"
         "rationale\n\n"
-        "For decision=NO_TRADE, symbol, expiration, "
-        "buy_strike, sell_strike, and contracts "
-        "must all be null.\n"
-        "For decision=TRADE, populate those fields using "
-        "only the candidate options below.\n"
-        "rationale must be one short sentence explaining the "
-        "market evidence behind your decision. Do not include "
-        "permission, broker instructions, or independent risk "
+        "For decision=NO_TRADE, symbol, expiration, buy_strike, "
+        "sell_strike, contracts, and option_type must all be null.\n"
+        "For decision=TRADE, populate those fields using only the "
+        "candidate options below and set option_type to call or put.\n"
+        "rationale must be one short sentence explaining the market "
+        "evidence behind your decision and chosen direction. Do not "
+        "include permission, broker instructions, or independent risk "
         "calculations in the rationale.\n\n"
         "Do not return pricing, risk calculations, "
         "permission decisions, or broker instructions.\n"
@@ -285,10 +315,12 @@ class StructuredAIRecommendationProvider:
                 if key != "rationale"
             }
 
-        if (
-            frozenset(parsed.keys())
-            == NO_TRADE_RESPONSE_FIELDS
-        ):
+        parsed_fields = frozenset(parsed.keys())
+
+        if parsed_fields in {
+            NO_TRADE_RESPONSE_FIELDS,
+            DIRECTIONAL_NO_TRADE_RESPONSE_FIELDS,
+        }:
             decision = parsed["decision"]
 
             if decision == "NO_TRADE":
@@ -308,14 +340,23 @@ class StructuredAIRecommendationProvider:
                         "ai_recommendation_schema_invalid"
                     )
 
+                if (
+                    "option_type" in parsed
+                    and parsed["option_type"] is not None
+                ):
+                    raise ValueError(
+                        "ai_recommendation_schema_invalid"
+                    )
+
                 self.last_decision = "NO_TRADE"
                 self.last_decision_rationale = rationale
                 return None
 
             if decision == "TRADE":
                 parsed = {
-                    field: parsed[field]
-                    for field in REQUIRED_RESPONSE_FIELDS
+                    key: value
+                    for key, value in parsed.items()
+                    if key != "decision"
                 }
                 self.last_decision = "TRADE"
                 self.last_decision_rationale = rationale
@@ -325,10 +366,21 @@ class StructuredAIRecommendationProvider:
                     "ai_recommendation_schema_invalid"
                 )
 
-        if (
-            frozenset(parsed.keys())
-            != REQUIRED_RESPONSE_FIELDS
-        ):
+        parsed_fields = frozenset(parsed.keys())
+        if parsed_fields not in {
+            REQUIRED_RESPONSE_FIELDS,
+            DIRECTIONAL_REQUIRED_RESPONSE_FIELDS,
+        }:
+            raise ValueError(
+                "ai_recommendation_schema_invalid"
+            )
+
+        option_type = parsed.get(
+            "option_type",
+            "call",
+        )
+
+        if option_type not in SUPPORTED_OPTION_TYPES:
             raise ValueError(
                 "ai_recommendation_schema_invalid"
             )
@@ -380,4 +432,5 @@ class StructuredAIRecommendationProvider:
             buy_strike=buy_strike,
             sell_strike=sell_strike,
             contracts=contracts,
+            option_type=option_type,
         )
