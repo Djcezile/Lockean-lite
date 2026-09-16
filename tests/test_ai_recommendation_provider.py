@@ -464,11 +464,8 @@ def test_ai_prompt_assigns_trade_decision_to_agent():
     assert "TRADE" in prompt
     assert "NO_TRADE" in prompt
 
-    assert (
-        "You decide whether the market opportunity "
-        "justifies a trade."
-        in prompt
-    )
+    assert "You decide whether the market opportunity" in prompt
+    assert "its direction" in prompt
 
     # More trading judgment does not grant authority.
     assert "authorization_receipt" not in prompt
