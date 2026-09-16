@@ -25,6 +25,13 @@ SUPPORTED_STRATEGIES = frozenset(
     }
 )
 
+SUPPORTED_OPTION_TYPES = frozenset(
+    {
+        "call",
+        "put",
+    }
+)
+
 
 @dataclass(frozen=True)
 class AuthorityDecision:
@@ -72,12 +79,24 @@ class LockeanAuthority:
                 proposal_id=proposal.proposal_id,
             )
 
-        if any(leg.option_type != "call" for leg in proposal.legs):
+        option_types = {
+            leg.option_type
+            for leg in proposal.legs
+        }
+
+        if (
+            len(option_types) != 1
+            or not option_types.issubset(
+                SUPPORTED_OPTION_TYPES
+            )
+        ):
             return AuthorityDecision(
                 status="REJECTED",
                 reason="unsupported_option_type",
                 proposal_id=proposal.proposal_id,
             )
+
+        option_type = next(iter(option_types))
 
         sides = {leg.side for leg in proposal.legs}
 
@@ -107,7 +126,16 @@ class LockeanAuthority:
             if leg.side == "sell"
         )
 
-        if buy_leg.strike >= sell_leg.strike:
+        if option_type == "call":
+            strike_order_valid = (
+                buy_leg.strike < sell_leg.strike
+            )
+        else:
+            strike_order_valid = (
+                buy_leg.strike > sell_leg.strike
+            )
+
+        if not strike_order_valid:
             return AuthorityDecision(
                 status="REJECTED",
                 reason="invalid_strike_order",
@@ -116,18 +144,22 @@ class LockeanAuthority:
 
         if proposal.net_debit is None:
             return AuthorityDecision(
-            status="REJECTED",
-            reason="missing_net_debit",
-            proposal_id=proposal.proposal_id,
-        )
+                status="REJECTED",
+                reason="missing_net_debit",
+                proposal_id=proposal.proposal_id,
+            )
 
         if proposal.net_debit <= 0:
             return AuthorityDecision(
-            status="REJECTED",
-            reason="invalid_net_debit",
-            proposal_id=proposal.proposal_id,
-        )
+                status="REJECTED",
+                reason="invalid_net_debit",
+                proposal_id=proposal.proposal_id,
+            )
 
+        # Maximum loss for either supported long debit vertical is the
+        # premium paid. Preserve the existing independently calculated
+        # debit-risk function while the strategy universe remains limited
+        # to bull-call and bear-put debit spreads.
         maximum_loss = calculate_bull_call_spread_maximum_loss(
             net_debit=proposal.net_debit,
             contracts=proposal.contracts,
@@ -238,6 +270,3 @@ class LockeanAuthority:
             proposal_id=proposal.proposal_id,
             authorization_receipt=receipt,
         )
-
-
-
