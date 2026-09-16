@@ -49,6 +49,17 @@ RECOMMENDATION_SCHEMA = {
                 None,
             ],
         },
+        "option_type": {
+            "type": [
+                "string",
+                "null",
+            ],
+            "enum": [
+                "call",
+                "put",
+                None,
+            ],
+        },
         "rationale": {
             "type": "string",
         },
@@ -60,6 +71,7 @@ RECOMMENDATION_SCHEMA = {
         "buy_strike",
         "sell_strike",
         "contracts",
+        "option_type",
         "rationale",
     ],
     "additionalProperties": False,
