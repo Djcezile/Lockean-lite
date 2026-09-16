@@ -12,6 +12,14 @@ from lockean_lite.proposal_pricing import (
 from lockean_lite.trade_proposal import TradeProposal
 
 
+SUPPORTED_OPTION_TYPES = frozenset(
+    {
+        "call",
+        "put",
+    }
+)
+
+
 @dataclass(frozen=True)
 class SpreadRecommendation:
     proposal_id: str
@@ -20,6 +28,7 @@ class SpreadRecommendation:
     buy_strike: Decimal
     sell_strike: Decimal
     contracts: int
+    option_type: str = "call"
 
 
 def _find_exact_quote(
@@ -37,7 +46,8 @@ def _find_exact_quote(
         if (
             quote.underlying_symbol
             == recommendation.symbol
-            and quote.option_type == "call"
+            and quote.option_type
+            == recommendation.option_type
             and quote.expiration
             == recommendation.expiration
             and quote.strike == strike
@@ -50,6 +60,30 @@ def _find_exact_quote(
         )
 
     return matches[0]
+
+
+def _validate_strike_order(
+    recommendation: SpreadRecommendation,
+) -> None:
+    if recommendation.option_type == "call":
+        valid = (
+            recommendation.buy_strike
+            < recommendation.sell_strike
+        )
+    elif recommendation.option_type == "put":
+        valid = (
+            recommendation.buy_strike
+            > recommendation.sell_strike
+        )
+    else:
+        raise ValueError(
+            "unsupported_option_type"
+        )
+
+    if not valid:
+        raise ValueError(
+            "invalid_strike_order"
+        )
 
 
 def build_trade_proposal_from_recommendation(
@@ -65,13 +99,14 @@ def build_trade_proposal_from_recommendation(
             "invalid_contract_quantity"
         )
 
-    if (
-        recommendation.buy_strike
-        >= recommendation.sell_strike
-    ):
+    if recommendation.option_type not in SUPPORTED_OPTION_TYPES:
         raise ValueError(
-            "invalid_strike_order"
+            "unsupported_option_type"
         )
+
+    _validate_strike_order(
+        recommendation
+    )
 
     buy_quote = _find_exact_quote(
         recommendation=recommendation,
@@ -86,14 +121,14 @@ def build_trade_proposal_from_recommendation(
     )
 
     buy_leg = OptionLeg(
-        option_type="call",
+        option_type=recommendation.option_type,
         strike=recommendation.buy_strike,
         expiration=recommendation.expiration,
         side="buy",
     )
 
     sell_leg = OptionLeg(
-        option_type="call",
+        option_type=recommendation.option_type,
         strike=recommendation.sell_strike,
         expiration=recommendation.expiration,
         side="sell",
