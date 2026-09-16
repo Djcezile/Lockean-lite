@@ -8,6 +8,9 @@ from alpaca.trading.enums import ContractType
 
 from lockean_lite.ai_recommendation_provider import build_recommendation_prompt
 from lockean_lite.alpaca_execution_adapter import resolve_option_contract_symbols
+from lockean_lite.alpaca_option_quote_adapter import (
+    read_spy_directional_candidate_quotes,
+)
 from lockean_lite.evidence_validation import ValidatedMarketEvidence
 from lockean_lite.lockean_authority import LockeanAuthority
 from lockean_lite.openai_recommendation_model import RECOMMENDATION_SCHEMA
@@ -17,7 +20,10 @@ from lockean_lite.paper_portfolio_snapshot import (
     PaperPortfolioSnapshot,
     PaperPositionSnapshot,
 )
-from lockean_lite.position_exit_manager import identify_managed_debit_spreads
+from lockean_lite.position_exit_manager import (
+    identify_managed_debit_spreads,
+    run_paper_spread_exit_cycle,
+)
 from lockean_lite.proposal_fingerprint import fingerprint_trade_proposal
 from lockean_lite.trade_recommendation import (
     SpreadRecommendation,
@@ -64,6 +70,48 @@ def _validated_evidence(proposal):
         as_of=datetime(2026, 9, 15, 20, 0, tzinfo=timezone.utc),
         spy_source="alpaca",
         vix_source="cboe",
+    )
+
+
+def _bear_put_snapshot():
+    return PaperPortfolioSnapshot(
+        status="ACTIVE",
+        currency="USD",
+        trading_blocked=False,
+        cash=Decimal("99910"),
+        equity=Decimal("100000"),
+        last_equity=Decimal("100000"),
+        buying_power=Decimal("300000"),
+        options_buying_power=Decimal("99910"),
+        portfolio_value=Decimal("100000"),
+        starting_equity=Decimal("100000"),
+        total_pl=Decimal("0"),
+        day_pl=Decimal("0"),
+        unrealized_pl=Decimal("0"),
+        positions=(
+            PaperPositionSnapshot(
+                symbol="SPY260918P00760000",
+                asset_class="us_option",
+                qty=Decimal("1"),
+                market_value=Decimal("100"),
+                cost_basis=Decimal("210"),
+                current_price=Decimal("1.00"),
+                unrealized_pl=Decimal("-110"),
+                unrealized_plpc=Decimal("-0.52"),
+            ),
+            PaperPositionSnapshot(
+                symbol="SPY260918P00755000",
+                asset_class="us_option",
+                qty=Decimal("-1"),
+                market_value=Decimal("-40"),
+                cost_basis=Decimal("-120"),
+                current_price=Decimal("0.40"),
+                unrealized_pl=Decimal("80"),
+                unrealized_plpc=Decimal("0.66"),
+            ),
+        ),
+        option_contract_units=Decimal("2"),
+        managed_spreads=1,
     )
 
 
@@ -196,48 +244,68 @@ def test_contract_resolver_requests_exact_put_contracts_for_bear_put():
     assert all(request.type == ContractType.PUT for request in client.requests)
 
 
-def test_exit_reconstruction_recognizes_bear_put_vertical():
-    snapshot = PaperPortfolioSnapshot(
-        status="ACTIVE",
-        currency="USD",
-        trading_blocked=False,
-        cash=Decimal("99910"),
-        equity=Decimal("100000"),
-        last_equity=Decimal("100000"),
-        buying_power=Decimal("300000"),
-        options_buying_power=Decimal("99910"),
-        portfolio_value=Decimal("100000"),
-        starting_equity=Decimal("100000"),
-        total_pl=Decimal("0"),
-        day_pl=Decimal("0"),
-        unrealized_pl=Decimal("0"),
-        positions=(
-            PaperPositionSnapshot(
-                symbol="SPY260918P00760000",
-                asset_class="us_option",
-                qty=Decimal("1"),
-                market_value=Decimal("100"),
-                cost_basis=Decimal("210"),
-                current_price=Decimal("1.00"),
-                unrealized_pl=Decimal("-110"),
-                unrealized_plpc=Decimal("-0.52"),
-            ),
-            PaperPositionSnapshot(
-                symbol="SPY260918P00755000",
-                asset_class="us_option",
-                qty=Decimal("-1"),
-                market_value=Decimal("-40"),
-                cost_basis=Decimal("-120"),
-                current_price=Decimal("0.40"),
-                unrealized_pl=Decimal("80"),
-                unrealized_plpc=Decimal("0.66"),
-            ),
-        ),
-        option_contract_units=Decimal("2"),
-        managed_spreads=1,
+def test_directional_candidate_reader_returns_calls_and_puts():
+    class CandidateTradingClient:
+        def __init__(self):
+            self.requests = []
+
+        def get_option_contracts(self, request):
+            self.requests.append(request)
+            if request.type == ContractType.CALL:
+                contract = SimpleNamespace(
+                    symbol="SPY260918C00760000",
+                    underlying_symbol="SPY",
+                    expiration_date=EXPIRATION,
+                    type=ContractType.CALL,
+                    strike_price=760.0,
+                    tradable=True,
+                )
+            else:
+                contract = SimpleNamespace(
+                    symbol="SPY260918P00760000",
+                    underlying_symbol="SPY",
+                    expiration_date=EXPIRATION,
+                    type=ContractType.PUT,
+                    strike_price=760.0,
+                    tradable=True,
+                )
+            return SimpleNamespace(option_contracts=[contract])
+
+    class CandidateOptionClient:
+        def get_option_latest_quote(self, request):
+            symbols = request.symbol_or_symbols
+            return {
+                symbol: SimpleNamespace(
+                    bid_price=1.00,
+                    ask_price=1.05,
+                    timestamp=QUOTE_TIME,
+                )
+                for symbol in symbols
+            }
+
+    trading_client = CandidateTradingClient()
+    snapshots = read_spy_directional_candidate_quotes(
+        trading_client=trading_client,
+        option_data_client=CandidateOptionClient(),
+        expiration=EXPIRATION,
+        minimum_strike=Decimal("750"),
+        maximum_strike=Decimal("770"),
     )
 
-    spreads = identify_managed_debit_spreads(snapshot)
+    assert {snapshot.option_type for snapshot in snapshots} == {
+        "call",
+        "put",
+    }
+    assert {request.type for request in trading_client.requests} == {
+        ContractType.CALL,
+        ContractType.PUT,
+    }
+
+
+def test_exit_reconstruction_recognizes_bear_put_vertical():
+    spreads = identify_managed_debit_spreads(
+        _bear_put_snapshot()
+    )
 
     assert len(spreads) == 1
     spread = spreads[0]
@@ -245,6 +313,46 @@ def test_exit_reconstruction_recognizes_bear_put_vertical():
     assert spread.long_strike == Decimal("760")
     assert spread.short_strike == Decimal("755")
     assert spread.entry_debit_per_contract == Decimal("0.90")
+
+
+def test_bear_put_uses_existing_take_profit_close_lifecycle():
+    class ExitOptionClient:
+        def get_option_latest_quote(self, request):
+            return {
+                "SPY260918P00760000": SimpleNamespace(
+                    bid_price=2.35,
+                    ask_price=2.40,
+                ),
+                "SPY260918P00755000": SimpleNamespace(
+                    bid_price=1.15,
+                    ask_price=1.20,
+                ),
+            }
+
+    class ExitTradingClient:
+        def __init__(self):
+            self.orders = []
+
+        def submit_order(self, *, order_data):
+            self.orders.append(order_data)
+            return SimpleNamespace(id="bear-put-exit-001")
+
+    trading_client = ExitTradingClient()
+    result = run_paper_spread_exit_cycle(
+        trading_client=trading_client,
+        option_data_client=ExitOptionClient(),
+        snapshot=_bear_put_snapshot(),
+        take_profit_percent=Decimal("20"),
+        stop_loss_percent=Decimal("20"),
+        take_profit_price_concession=Decimal("0.02"),
+    )
+
+    assert result.submitted is True
+    assert result.reason == "take_profit_exit_submitted"
+    assert result.broker_order_id == "bear-put-exit-001"
+    assert result.long_symbol == "SPY260918P00760000"
+    assert result.short_symbol == "SPY260918P00755000"
+    assert len(trading_client.orders) == 1
 
 
 def test_directional_prompt_and_schema_allow_call_or_put_without_forcing_trade():
