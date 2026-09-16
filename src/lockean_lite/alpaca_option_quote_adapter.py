@@ -23,17 +23,28 @@ def _decimal_string(
     )
 
 
-def translate_alpaca_option_quote(
+def _option_type_text(contract_type) -> str:
+    if contract_type == ContractType.CALL:
+        return "call"
+    if contract_type == ContractType.PUT:
+        return "put"
+    raise ValueError(
+        "unsupported_option_type"
+    )
+
+
+def _translate_alpaca_option_quote(
     *,
     contract,
     quote,
+    allowed_types,
 ) -> OptionQuoteSnapshot:
     if not contract.tradable:
         raise ValueError(
             "option_contract_not_tradable"
         )
 
-    if contract.type != ContractType.CALL:
+    if contract.type not in allowed_types:
         raise ValueError(
             "unsupported_option_type"
         )
@@ -60,7 +71,9 @@ def translate_alpaca_option_quote(
         underlying_symbol=(
             contract.underlying_symbol
         ),
-        option_type="call",
+        option_type=_option_type_text(
+            contract.type
+        ),
         strike=Decimal(
             str(contract.strike_price)
         ),
@@ -76,20 +89,49 @@ def translate_alpaca_option_quote(
     )
 
 
-def read_spy_call_candidate_quotes(
+def translate_alpaca_option_quote(
+    *,
+    contract,
+    quote,
+) -> OptionQuoteSnapshot:
+    # Preserve the original call-only public contract for existing callers.
+    return _translate_alpaca_option_quote(
+        contract=contract,
+        quote=quote,
+        allowed_types={ContractType.CALL},
+    )
+
+
+def translate_alpaca_directional_option_quote(
+    *,
+    contract,
+    quote,
+) -> OptionQuoteSnapshot:
+    return _translate_alpaca_option_quote(
+        contract=contract,
+        quote=quote,
+        allowed_types={
+            ContractType.CALL,
+            ContractType.PUT,
+        },
+    )
+
+
+def _read_spy_candidate_quotes(
     *,
     trading_client,
     option_data_client,
     expiration: date,
     minimum_strike: Decimal,
     maximum_strike: Decimal,
+    contract_type,
 ) -> tuple[OptionQuoteSnapshot, ...]:
     response = (
         trading_client.get_option_contracts(
             GetOptionContractsRequest(
                 underlying_symbols=["SPY"],
                 expiration_date=expiration,
-                type=ContractType.CALL,
+                type=contract_type,
                 strike_price_gte=(
                     _decimal_string(
                         minimum_strike
@@ -115,9 +157,7 @@ def read_spy_call_candidate_quotes(
     )
 
     if not contracts:
-        raise ValueError(
-            "option_candidate_universe_empty"
-        )
+        return ()
 
     symbols = tuple(
         contract.symbol
@@ -147,7 +187,7 @@ def read_spy_call_candidate_quotes(
 
         try:
             snapshot = (
-                translate_alpaca_option_quote(
+                translate_alpaca_directional_option_quote(
                     contract=contract,
                     quote=quote,
                 )
@@ -159,10 +199,66 @@ def read_spy_call_candidate_quotes(
             snapshot
         )
 
-    snapshots.sort(
-        key=lambda snapshot: (
-            snapshot.strike,
-            snapshot.contract_symbol,
+    return tuple(snapshots)
+
+
+def read_spy_call_candidate_quotes(
+    *,
+    trading_client,
+    option_data_client,
+    expiration: date,
+    minimum_strike: Decimal,
+    maximum_strike: Decimal,
+) -> tuple[OptionQuoteSnapshot, ...]:
+    snapshots = _read_spy_candidate_quotes(
+        trading_client=trading_client,
+        option_data_client=option_data_client,
+        expiration=expiration,
+        minimum_strike=minimum_strike,
+        maximum_strike=maximum_strike,
+        contract_type=ContractType.CALL,
+    )
+
+    if not snapshots:
+        raise ValueError(
+            "option_candidate_universe_empty"
+        )
+
+    return tuple(
+        sorted(
+            snapshots,
+            key=lambda snapshot: (
+                snapshot.strike,
+                snapshot.contract_symbol,
+            ),
+        )
+    )
+
+
+def read_spy_directional_candidate_quotes(
+    *,
+    trading_client,
+    option_data_client,
+    expiration: date,
+    minimum_strike: Decimal,
+    maximum_strike: Decimal,
+) -> tuple[OptionQuoteSnapshot, ...]:
+    snapshots = (
+        _read_spy_candidate_quotes(
+            trading_client=trading_client,
+            option_data_client=option_data_client,
+            expiration=expiration,
+            minimum_strike=minimum_strike,
+            maximum_strike=maximum_strike,
+            contract_type=ContractType.CALL,
+        )
+        + _read_spy_candidate_quotes(
+            trading_client=trading_client,
+            option_data_client=option_data_client,
+            expiration=expiration,
+            minimum_strike=minimum_strike,
+            maximum_strike=maximum_strike,
+            contract_type=ContractType.PUT,
         )
     )
 
@@ -172,5 +268,12 @@ def read_spy_call_candidate_quotes(
         )
 
     return tuple(
-        snapshots
+        sorted(
+            snapshots,
+            key=lambda snapshot: (
+                snapshot.option_type,
+                snapshot.strike,
+                snapshot.contract_symbol,
+            ),
+        )
     )
