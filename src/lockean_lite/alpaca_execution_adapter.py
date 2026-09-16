@@ -20,6 +20,14 @@ def _decimal_string(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
+def _contract_type_for(option_type: str):
+    if option_type == "call":
+        return ContractType.CALL
+    if option_type == "put":
+        return ContractType.PUT
+    raise ValueError("unsupported_option_type")
+
+
 def resolve_option_contract_symbols(
     *,
     client,
@@ -28,15 +36,15 @@ def resolve_option_contract_symbols(
     resolved_symbols = []
 
     for leg in proposal.legs:
-        if leg.option_type != "call":
-            raise ValueError("unsupported_option_type")
-
+        contract_type = _contract_type_for(
+            leg.option_type
+        )
         strike = _decimal_string(leg.strike)
 
         request = GetOptionContractsRequest(
             underlying_symbols=[proposal.symbol],
             expiration_date=leg.expiration,
-            type=ContractType.CALL,
+            type=contract_type,
             strike_price_gte=strike,
             strike_price_lte=strike,
             limit=10,
@@ -60,7 +68,7 @@ def resolve_option_contract_symbols(
                 and contract.expiration_date
                 == leg.expiration
                 and contract.type
-                == ContractType.CALL
+                == contract_type
                 and Decimal(str(contract.strike_price))
                 == leg.strike
             )
