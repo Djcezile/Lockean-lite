@@ -542,11 +542,19 @@ def run_paper_spread_exit_cycle(
     spreads = identify_managed_debit_spreads(snapshot)
     expected_managed_units = int(snapshot.managed_spreads)
 
-    if (
-        entry_basis_provider is not None
-        and _managed_contracts(spreads) < expected_managed_units
-    ):
-        recovered_basis = entry_basis_provider()
+    if _managed_contracts(spreads) < expected_managed_units:
+        provider = entry_basis_provider
+
+        if provider is None:
+            from lockean_lite.filled_spread_basis import (
+                read_open_spread_entry_basis,
+            )
+
+            provider = lambda: read_open_spread_entry_basis(
+                trading_client=trading_client
+            )
+
+        recovered_basis = provider()
         spreads = identify_managed_debit_spreads(
             snapshot,
             entry_basis_by_structure=recovered_basis,
