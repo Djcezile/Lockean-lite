@@ -76,6 +76,26 @@ def _order_structure_and_purpose(order):
     return frozenset(symbols), purpose
 
 
+def _entry_debit(order) -> Decimal:
+    filled_price = _decimal(
+        getattr(order, "filled_avg_price", None)
+    )
+    if filled_price > 0:
+        return filled_price
+
+    # A filled debit MLEG was authorized and submitted with a positive parent
+    # limit debit.  If Alpaca omits the parent filled average, the positive
+    # limit is a conservative basis: an actual debit fill cannot be worse
+    # than its buy-limit ceiling.
+    limit_price = _decimal(
+        getattr(order, "limit_price", None)
+    )
+    if limit_price > 0:
+        return limit_price
+
+    return Decimal("0")
+
+
 def read_open_spread_entry_basis(*, trading_client):
     """Recover remaining open debit lots from broker closed MLEG history.
 
@@ -117,9 +137,7 @@ def read_open_spread_entry_basis(*, trading_client):
             continue
 
         if purpose == "entry":
-            price = _decimal(
-                getattr(order, "filled_avg_price", None)
-            )
+            price = _entry_debit(order)
             if price <= 0:
                 complete[structure] = False
                 lots[structure].clear()
@@ -129,7 +147,7 @@ def read_open_spread_entry_basis(*, trading_client):
                 lots[structure].append(price)
             continue
 
-        # Alpaca positions are netted.  Treat filled closing MLEGs as FIFO
+        # Alpaca positions are netted. Treat filled closing MLEGs as FIFO
         # consumption of the opening lots for the exact same structure.
         for _ in range(units):
             if not lots[structure]:
