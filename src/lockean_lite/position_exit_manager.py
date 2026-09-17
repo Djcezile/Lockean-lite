@@ -139,6 +139,8 @@ def _short_matches_long_vertical(
 
 def identify_managed_debit_spreads(
     snapshot: PaperPortfolioSnapshot,
+    *,
+    entry_basis_by_structure: dict[frozenset[str], Decimal] | None = None,
 ) -> tuple[ManagedBullCallSpread, ...]:
     long_positions: list[
         tuple[PaperPositionSnapshot, str, str, str, Decimal]
@@ -252,13 +254,27 @@ def identify_managed_debit_spreads(
             )
             total_entry_debit_dollars = long_cost - short_cost
 
+            entry_debit_per_contract = None
+
             if total_entry_debit_dollars > 0:
                 entry_debit_per_contract = (
                     total_entry_debit_dollars
                     / Decimal(contracts)
                     / Decimal("100")
                 )
+            elif entry_basis_by_structure is not None:
+                recovered_basis = entry_basis_by_structure.get(
+                    frozenset(
+                        {
+                            long_position.symbol,
+                            short_position.symbol,
+                        }
+                    )
+                )
+                if recovered_basis is not None and recovered_basis > 0:
+                    entry_debit_per_contract = recovered_basis
 
+            if entry_debit_per_contract is not None:
                 spreads.append(
                     ManagedBullCallSpread(
                         underlying=underlying,
@@ -424,6 +440,13 @@ def _pending_exit_state(
     return tuple(stale_orders), tuple(covered_structures)
 
 
+def _managed_contracts(spreads) -> int:
+    return sum(
+        spread.contracts
+        for spread in spreads
+    )
+
+
 def run_paper_spread_exit_cycle(
     *,
     trading_client,
@@ -433,6 +456,7 @@ def run_paper_spread_exit_cycle(
     stop_loss_percent: Decimal = Decimal("50.00"),
     exit_order_timeout_seconds: int = 240,
     take_profit_price_concession: Decimal = Decimal("0.02"),
+    entry_basis_provider=None,
     now_fn=None,
 ) -> PaperSpreadExitResult:
     if take_profit_percent < 0:
@@ -516,6 +540,24 @@ def run_paper_spread_exit_cycle(
         )
 
     spreads = identify_managed_debit_spreads(snapshot)
+    expected_managed_units = int(snapshot.managed_spreads)
+
+    if (
+        entry_basis_provider is not None
+        and _managed_contracts(spreads) < expected_managed_units
+    ):
+        recovered_basis = entry_basis_provider()
+        spreads = identify_managed_debit_spreads(
+            snapshot,
+            entry_basis_by_structure=recovered_basis,
+        )
+
+        if _managed_contracts(spreads) < expected_managed_units:
+            return PaperSpreadExitResult(
+                submitted=False,
+                reason="managed_spread_entry_basis_unavailable",
+                block_new_entries=True,
+            )
 
     if not spreads:
         return PaperSpreadExitResult(
