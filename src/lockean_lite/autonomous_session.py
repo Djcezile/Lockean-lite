@@ -26,6 +26,8 @@ from lockean_lite.safe_error_reporting import safe_exception_reason
 
 
 DEFAULT_INTERVAL_SECONDS = 300
+DEFAULT_RISK_CHECK_INTERVAL_SECONDS = 30
+DEFAULT_ENTRY_COOLDOWN_SECONDS = 600
 DEFAULT_MAXIMUM_OPEN_SPREADS = 5
 DEFAULT_MAXIMUM_DAILY_LOSS = Decimal("750.00")
 # Log Days 1-3 used deliberately loose lifecycle-testing thresholds. Now that
@@ -107,6 +109,12 @@ def _log_exit_pricing(output_fn, exit_result) -> None:
     output_fn(details)
 
 
+def _next_check_message(*, risk_interval: int, entry_interval: int) -> str:
+    if risk_interval == entry_interval:
+        return f"NEXT AUTONOMOUS CHECK IN {risk_interval} SECONDS"
+    return f"NEXT RISK CHECK IN {risk_interval} SECONDS"
+
+
 def run_autonomous_paper_session(
     *,
     clock_provider,
@@ -116,6 +124,8 @@ def run_autonomous_paper_session(
     entry_order_maintenance_runner=None,
     end_of_day_cancel_runner=None,
     interval_seconds: int = DEFAULT_INTERVAL_SECONDS,
+    risk_check_interval_seconds: int | None = None,
+    entry_cooldown_seconds: int = 0,
     maximum_open_spreads: int = DEFAULT_MAXIMUM_OPEN_SPREADS,
     maximum_daily_loss: Decimal = DEFAULT_MAXIMUM_DAILY_LOSS,
     end_of_day_entry_cutoff_minutes: int = DEFAULT_EOD_ENTRY_CUTOFF_MINUTES,
@@ -126,6 +136,13 @@ def run_autonomous_paper_session(
 ) -> AutonomousSessionSummary:
     if interval_seconds <= 0:
         raise ValueError("interval_seconds_must_be_positive")
+
+    if risk_check_interval_seconds is None:
+        risk_check_interval_seconds = interval_seconds
+    if risk_check_interval_seconds <= 0:
+        raise ValueError("risk_check_interval_seconds_must_be_positive")
+    if entry_cooldown_seconds < 0:
+        raise ValueError("entry_cooldown_seconds_must_be_non_negative")
     if end_of_day_entry_cutoff_minutes < 0:
         raise ValueError("end_of_day_entry_cutoff_minutes_must_be_non_negative")
 
@@ -135,14 +152,32 @@ def run_autonomous_paper_session(
     last_reason = "session_not_started"
     market_has_opened = False
 
+    # This elapsed-session clock advances by the amount actually slept. It
+    # keeps entry scheduling deterministic in tests while matching wall-clock
+    # cadence in production, where sleep_fn is time.sleep.
+    elapsed_seconds = 0.0
+    next_entry_check_at = 0.0
+    entry_cooldown_until = 0.0
+
     output_fn("LOCKEAN AUTONOMOUS PAPER SESSION")
     output_fn("===============================")
     output_fn("MODE: ALPACA PAPER ONLY")
     output_fn(f"MAX MANAGED SPREAD UNITS: {maximum_open_spreads}")
     output_fn(f"DAILY LOSS HALT: -${maximum_daily_loss:.2f}")
+    output_fn(f"AI ENTRY CADENCE: {interval_seconds} seconds")
+    output_fn(
+        "POSITION RISK CADENCE: "
+        f"{risk_check_interval_seconds} seconds"
+    )
+    output_fn(f"POST-SUBMISSION ENTRY COOLDOWN: {entry_cooldown_seconds} seconds")
     output_fn(
         "END-OF-DAY ENTRY CUTOFF: "
         f"{end_of_day_entry_cutoff_minutes} minutes"
+    )
+
+    next_check_message = _next_check_message(
+        risk_interval=risk_check_interval_seconds,
+        entry_interval=interval_seconds,
     )
 
     while True:
@@ -167,7 +202,9 @@ def run_autonomous_paper_session(
                     last_status=last_status,
                     last_reason=last_reason,
                 )
-            sleep_fn(min(interval_seconds, 60))
+            wait_seconds = min(risk_check_interval_seconds, 60)
+            sleep_fn(wait_seconds)
+            elapsed_seconds += wait_seconds
             continue
 
         output_fn("")
@@ -200,7 +237,9 @@ def run_autonomous_paper_session(
                     last_status=last_status,
                     last_reason=last_reason,
                 )
-            sleep_fn(min(interval_seconds, 60))
+            wait_seconds = min(risk_check_interval_seconds, 60)
+            sleep_fn(wait_seconds)
+            elapsed_seconds += wait_seconds
             continue
 
         market_has_opened = True
@@ -242,10 +281,13 @@ def run_autonomous_paper_session(
                     last_status=last_status,
                     last_reason=last_reason,
                 )
-            output_fn(f"NEXT AUTONOMOUS CHECK IN {interval_seconds} SECONDS")
-            sleep_fn(interval_seconds)
+            output_fn(next_check_message)
+            sleep_fn(risk_check_interval_seconds)
+            elapsed_seconds += risk_check_interval_seconds
             continue
 
+        # Risk and reconciliation are intentionally evaluated on every loop.
+        # Fresh AI entry decisions are scheduled independently below.
         if exit_runner is not None:
             try:
                 exit_result = exit_runner(snapshot)
@@ -266,8 +308,9 @@ def run_autonomous_paper_session(
                         last_status=last_status,
                         last_reason=last_reason,
                     )
-                output_fn(f"NEXT AUTONOMOUS CHECK IN {interval_seconds} SECONDS")
-                sleep_fn(interval_seconds)
+                output_fn(next_check_message)
+                sleep_fn(risk_check_interval_seconds)
+                elapsed_seconds += risk_check_interval_seconds
                 continue
 
             if getattr(exit_result, "cancelled_order_ids", ()):
@@ -300,8 +343,9 @@ def run_autonomous_paper_session(
                         last_status=last_status,
                         last_reason=last_reason,
                     )
-                output_fn(f"NEXT AUTONOMOUS CHECK IN {interval_seconds} SECONDS")
-                sleep_fn(interval_seconds)
+                output_fn(next_check_message)
+                sleep_fn(risk_check_interval_seconds)
+                elapsed_seconds += risk_check_interval_seconds
                 continue
 
             if exit_result.block_new_entries:
@@ -318,8 +362,9 @@ def run_autonomous_paper_session(
                         last_status=last_status,
                         last_reason=last_reason,
                     )
-                output_fn(f"NEXT AUTONOMOUS CHECK IN {interval_seconds} SECONDS")
-                sleep_fn(interval_seconds)
+                output_fn(next_check_message)
+                sleep_fn(risk_check_interval_seconds)
+                elapsed_seconds += risk_check_interval_seconds
                 continue
 
             output_fn(f"POSITION EXIT CHECK: {exit_result.reason}")
@@ -344,8 +389,9 @@ def run_autonomous_paper_session(
                         last_status=last_status,
                         last_reason=last_reason,
                     )
-                output_fn(f"NEXT AUTONOMOUS CHECK IN {interval_seconds} SECONDS")
-                sleep_fn(interval_seconds)
+                output_fn(next_check_message)
+                sleep_fn(risk_check_interval_seconds)
+                elapsed_seconds += risk_check_interval_seconds
                 continue
 
             if entry_order_result.cancelled_order_ids:
@@ -366,8 +412,9 @@ def run_autonomous_paper_session(
                         last_status=last_status,
                         last_reason=last_reason,
                     )
-                output_fn(f"NEXT AUTONOMOUS CHECK IN {interval_seconds} SECONDS")
-                sleep_fn(interval_seconds)
+                output_fn(next_check_message)
+                sleep_fn(risk_check_interval_seconds)
+                elapsed_seconds += risk_check_interval_seconds
                 continue
 
             if entry_order_result.active_order_ids:
@@ -377,46 +424,84 @@ def run_autonomous_paper_session(
                     + ",".join(entry_order_result.active_order_ids)
                 )
 
-        entry_decision = evaluate_portfolio_entry(
-            snapshot=snapshot,
-            maximum_open_spreads=maximum_open_spreads,
-            maximum_daily_loss=maximum_daily_loss,
-        )
+        entry_due = elapsed_seconds >= next_entry_check_at
+        cooldown_active = elapsed_seconds < entry_cooldown_until
 
-        if not entry_decision.allowed:
-            last_status = "ENTRY_BLOCKED"
-            last_reason = entry_decision.reason
+        if entry_due and cooldown_active:
+            remaining = max(0, int(entry_cooldown_until - elapsed_seconds))
+            last_status = "ENTRY_COOLDOWN"
+            last_reason = "post_submission_entry_cooldown"
             output_fn(
-                "PORTFOLIO ENTRY GATE: BLOCKED | "
-                f"{entry_decision.reason}"
+                "ENTRY COOLDOWN: ACTIVE | "
+                f"remaining_seconds={remaining}"
             )
-        else:
-            trade_cycles += 1
-            try:
-                cycle_result = cycle_runner()
-            except Exception as error:
-                last_status = "CYCLE_ERROR"
-                last_reason = safe_exception_reason(error)
+        elif entry_due:
+            entry_decision = evaluate_portfolio_entry(
+                snapshot=snapshot,
+                maximum_open_spreads=maximum_open_spreads,
+                maximum_daily_loss=maximum_daily_loss,
+            )
+
+            if not entry_decision.allowed:
+                last_status = "ENTRY_BLOCKED"
+                last_reason = entry_decision.reason
                 output_fn(
-                    "AUTONOMOUS CYCLE: ERROR | "
-                    f"{type(error).__name__} | {last_reason}"
+                    "PORTFOLIO ENTRY GATE: BLOCKED | "
+                    f"{entry_decision.reason}"
                 )
-                output_fn("FAIL CLOSED: reconcile Alpaca state on next iteration")
+                next_entry_check_at = elapsed_seconds + interval_seconds
             else:
-                last_status = cycle_result.status
-                last_reason = cycle_result.reason
-                output_fn(
-                    "AUTONOMOUS CYCLE: "
-                    f"{cycle_result.status} | {cycle_result.reason}"
-                )
-                for diagnostic in getattr(cycle_result, "diagnostics", ()):
-                    output_fn(f"AUTONOMOUS DIAGNOSTIC: {diagnostic}")
-                execution_proof = getattr(cycle_result, "execution_proof", None)
-                if execution_proof is not None:
+                trade_cycles += 1
+                next_entry_check_at = elapsed_seconds + interval_seconds
+                try:
+                    cycle_result = cycle_runner()
+                except Exception as error:
+                    last_status = "CYCLE_ERROR"
+                    last_reason = safe_exception_reason(error)
                     output_fn(
-                        "ALPACA BROKER ORDER ID: "
-                        f"{execution_proof.broker_order_id}"
+                        "AUTONOMOUS CYCLE: ERROR | "
+                        f"{type(error).__name__} | {last_reason}"
                     )
+                    output_fn(
+                        "FAIL CLOSED: reconcile Alpaca state on next iteration"
+                    )
+                else:
+                    last_status = cycle_result.status
+                    last_reason = cycle_result.reason
+                    output_fn(
+                        "AUTONOMOUS CYCLE: "
+                        f"{cycle_result.status} | {cycle_result.reason}"
+                    )
+                    for diagnostic in getattr(cycle_result, "diagnostics", ()):
+                        output_fn(f"AUTONOMOUS DIAGNOSTIC: {diagnostic}")
+                    execution_proof = getattr(
+                        cycle_result,
+                        "execution_proof",
+                        None,
+                    )
+                    if execution_proof is not None:
+                        output_fn(
+                            "ALPACA BROKER ORDER ID: "
+                            f"{execution_proof.broker_order_id}"
+                        )
+
+                    if (
+                        cycle_result.status == "SUBMITTED"
+                        or execution_proof is not None
+                    ) and entry_cooldown_seconds > 0:
+                        entry_cooldown_until = (
+                            elapsed_seconds + entry_cooldown_seconds
+                        )
+                        output_fn(
+                            "ENTRY COOLDOWN: STARTED | "
+                            f"duration_seconds={entry_cooldown_seconds}"
+                        )
+        else:
+            remaining = max(0, int(next_entry_check_at - elapsed_seconds))
+            output_fn(
+                "ENTRY DECISION: WAITING | "
+                f"next_agent_check_in={remaining} seconds"
+            )
 
         if max_iterations is not None and iterations >= max_iterations:
             return _summary(
@@ -426,8 +511,9 @@ def run_autonomous_paper_session(
                 last_reason=last_reason,
             )
 
-        output_fn(f"NEXT AUTONOMOUS CHECK IN {interval_seconds} SECONDS")
-        sleep_fn(interval_seconds)
+        output_fn(next_check_message)
+        sleep_fn(risk_check_interval_seconds)
+        elapsed_seconds += risk_check_interval_seconds
 
 
 def main(argv=None) -> int:
@@ -450,7 +536,28 @@ def main(argv=None) -> int:
         help="SPY option expiration to trade.",
     )
     parser.add_argument(
-        "--interval-seconds", type=int, default=DEFAULT_INTERVAL_SECONDS
+        "--interval-seconds",
+        type=int,
+        default=DEFAULT_INTERVAL_SECONDS,
+        help="Seconds between fresh AI entry decisions.",
+    )
+    parser.add_argument(
+        "--risk-check-interval-seconds",
+        type=int,
+        default=DEFAULT_RISK_CHECK_INTERVAL_SECONDS,
+        help=(
+            "Seconds between portfolio reconciliation and managed-position "
+            "exit checks."
+        ),
+    )
+    parser.add_argument(
+        "--entry-cooldown-seconds",
+        type=int,
+        default=DEFAULT_ENTRY_COOLDOWN_SECONDS,
+        help=(
+            "Minimum seconds after a submitted entry before another fresh "
+            "entry decision may run."
+        ),
     )
     parser.add_argument(
         "--maximum-open-spreads", type=int, default=DEFAULT_MAXIMUM_OPEN_SPREADS
@@ -459,7 +566,7 @@ def main(argv=None) -> int:
         "--maximum-same-structure-units",
         type=int,
         default=DEFAULT_MAXIMUM_SAME_STRUCTURE_UNITS,
-        help="Maximum filled units allowed in one exact bull-call vertical.",
+        help="Maximum filled units allowed in one exact directional vertical.",
     )
     parser.add_argument(
         "--maximum-allowed-loss", type=Decimal, default=Decimal("150.00")
@@ -516,7 +623,7 @@ def main(argv=None) -> int:
         default=DEFAULT_EXIT_ORDER_TIMEOUT_SECONDS,
         help=(
             "Cancel an unfilled exit MLEG after this many seconds so a later "
-            "cycle can reprice it."
+            "risk cycle can reprice it."
         ),
     )
     parser.add_argument(
@@ -525,7 +632,7 @@ def main(argv=None) -> int:
         default=DEFAULT_ENTRY_ORDER_TIMEOUT_SECONDS,
         help=(
             "Cancel an unfilled entry MLEG after this many seconds. A later "
-            "cycle must build a fresh proposal and authorization."
+            "AI cycle must build a fresh proposal and authorization."
         ),
     )
     parser.add_argument(
@@ -601,7 +708,10 @@ def main(argv=None) -> int:
         f"SL={args.stop_loss_percent}% | "
         f"TP_CONCESSION=${args.take_profit_price_concession} | "
         f"SAME_STRUCTURE_CAP={args.maximum_same_structure_units} | "
-        f"ACTIVITY_MODE={args.activity_mode}"
+        f"ACTIVITY_MODE={args.activity_mode} | "
+        f"AI_CADENCE={args.interval_seconds}s | "
+        f"RISK_CADENCE={args.risk_check_interval_seconds}s | "
+        f"ENTRY_COOLDOWN={args.entry_cooldown_seconds}s"
     )
 
     run_autonomous_paper_session(
@@ -612,6 +722,8 @@ def main(argv=None) -> int:
         entry_order_maintenance_runner=entry_order_maintenance_runner,
         end_of_day_cancel_runner=end_of_day_cancel_runner,
         interval_seconds=args.interval_seconds,
+        risk_check_interval_seconds=args.risk_check_interval_seconds,
+        entry_cooldown_seconds=args.entry_cooldown_seconds,
         maximum_open_spreads=args.maximum_open_spreads,
         maximum_daily_loss=args.maximum_daily_loss,
         end_of_day_entry_cutoff_minutes=args.eod_entry_cutoff_minutes,
