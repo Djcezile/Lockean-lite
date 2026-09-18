@@ -204,12 +204,12 @@ def test_orphan_inventory_blocks_entries_when_no_intact_spread_needs_exit():
         def get_option_latest_quote(self, request):
             return {
                 CALL_LONG: SimpleNamespace(
-                    bid_price="0.72",
-                    ask_price="0.73",
+                    bid_price="0.78",
+                    ask_price="0.79",
                 ),
                 CALL_SHORT: SimpleNamespace(
-                    bid_price="0.08",
-                    ask_price="0.09",
+                    bid_price="0.09",
+                    ask_price="0.10",
                 ),
             }
 
