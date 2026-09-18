@@ -42,6 +42,14 @@ class ManagedBullCallSpread:
 
 
 @dataclass(frozen=True)
+class HistoryReconciledSpreadState:
+    spreads: tuple[ManagedBullCallSpread, ...]
+    unreconciled_option_symbols: tuple[str, ...]
+    recovered_history_units: int
+    reconciled_history_units: int
+
+
+@dataclass(frozen=True)
 class PaperSpreadExitResult:
     submitted: bool
     reason: str
@@ -296,6 +304,265 @@ def identify_managed_debit_spreads(
             short_remaining[short_index] -= contracts
 
     return tuple(spreads)
+
+
+def _history_structure_spread(
+    *,
+    structure: frozenset[str],
+    lots: tuple[Decimal, ...],
+) -> ManagedBullCallSpread | None:
+    if len(structure) != 2 or not lots:
+        return None
+
+    symbols = tuple(sorted(structure))
+    parsed = tuple(
+        _parse_option_contract(symbol)
+        for symbol in symbols
+    )
+    if any(item is None for item in parsed):
+        return None
+
+    first = parsed[0]
+    second = parsed[1]
+    assert first is not None
+    assert second is not None
+
+    if (
+        first[0] != second[0]
+        or first[1] != second[1]
+        or first[2] != second[2]
+    ):
+        return None
+
+    underlying = first[0]
+    expiration_code = first[1]
+    option_type = first[2]
+
+    by_strike = sorted(
+        zip(symbols, parsed),
+        key=lambda item: item[1][3],
+    )
+    lower_symbol, lower_parsed = by_strike[0]
+    higher_symbol, higher_parsed = by_strike[1]
+
+    if lower_parsed[3] == higher_parsed[3]:
+        return None
+
+    if option_type == "call":
+        long_symbol = lower_symbol
+        long_strike = lower_parsed[3]
+        short_symbol = higher_symbol
+        short_strike = higher_parsed[3]
+    elif option_type == "put":
+        long_symbol = higher_symbol
+        long_strike = higher_parsed[3]
+        short_symbol = lower_symbol
+        short_strike = lower_parsed[3]
+    else:
+        return None
+
+    entry_debit = (
+        sum(lots, start=Decimal("0"))
+        / Decimal(len(lots))
+    )
+
+    if entry_debit <= 0:
+        return None
+
+    return ManagedBullCallSpread(
+        underlying=underlying,
+        expiration_code=expiration_code,
+        long_symbol=long_symbol,
+        short_symbol=short_symbol,
+        long_strike=long_strike,
+        short_strike=short_strike,
+        contracts=len(lots),
+        entry_debit_per_contract=entry_debit,
+        option_type=option_type,
+    )
+
+
+def identify_history_reconciled_debit_spreads(
+    *,
+    snapshot: PaperPortfolioSnapshot,
+    recovery_result,
+) -> HistoryReconciledSpreadState:
+    """Use broker order history as spread identity and positions as proof.
+
+    Historical MLEG lots define which exact verticals were actually opened.
+    Current net positions are then compared against each disconnected history
+    component. A component is manageable only when its signed symbol inventory
+    matches exactly. This prevents nearest-strike reconstruction from pairing
+    legs that originated in different spreads.
+    """
+
+    current_qty: dict[str, int] = {}
+
+    for position in snapshot.positions:
+        if _parse_option_contract(position.symbol) is None:
+            continue
+
+        quantity = position.qty
+        if quantity == 0:
+            continue
+        if quantity != quantity.to_integral_value():
+            # Non-integral option inventory cannot be reconciled safely.
+            continue
+
+        current_qty[position.symbol] = int(quantity)
+
+    history_spreads = []
+
+    for structure, lots in getattr(
+        recovery_result,
+        "open_lots_by_structure",
+        {},
+    ).items():
+        spread = _history_structure_spread(
+            structure=structure,
+            lots=lots,
+        )
+        if spread is not None:
+            history_spreads.append(spread)
+
+    recovered_history_units = sum(
+        spread.contracts
+        for spread in history_spreads
+    )
+
+    # Build connected components by shared contract symbol. Exact historical
+    # structures in separate components can be reconciled independently.
+    symbol_to_indices: dict[str, set[int]] = {}
+
+    for index, spread in enumerate(history_spreads):
+        for symbol in (
+            spread.long_symbol,
+            spread.short_symbol,
+        ):
+            symbol_to_indices.setdefault(
+                symbol,
+                set(),
+            ).add(index)
+
+    remaining_indices = set(range(len(history_spreads)))
+    components: list[set[int]] = []
+
+    while remaining_indices:
+        seed = remaining_indices.pop()
+        component = {seed}
+        queue = [seed]
+
+        while queue:
+            index = queue.pop()
+            spread = history_spreads[index]
+
+            for symbol in (
+                spread.long_symbol,
+                spread.short_symbol,
+            ):
+                for neighbor in symbol_to_indices.get(
+                    symbol,
+                    set(),
+                ):
+                    if neighbor in remaining_indices:
+                        remaining_indices.remove(neighbor)
+                        component.add(neighbor)
+                        queue.append(neighbor)
+
+        components.append(component)
+
+    reconciled: list[ManagedBullCallSpread] = []
+    covered_current_symbols: set[str] = set()
+    unreconciled: set[str] = set()
+
+    for component in components:
+        predicted: dict[str, int] = {}
+        component_symbols: set[str] = set()
+
+        for index in component:
+            spread = history_spreads[index]
+            component_symbols.update(
+                {
+                    spread.long_symbol,
+                    spread.short_symbol,
+                }
+            )
+            predicted[spread.long_symbol] = (
+                predicted.get(spread.long_symbol, 0)
+                + spread.contracts
+            )
+            predicted[spread.short_symbol] = (
+                predicted.get(spread.short_symbol, 0)
+                - spread.contracts
+            )
+
+        matches_current_inventory = all(
+            current_qty.get(symbol, 0)
+            == predicted.get(symbol, 0)
+            for symbol in component_symbols
+        )
+
+        if matches_current_inventory:
+            for index in sorted(component):
+                reconciled.append(
+                    history_spreads[index]
+                )
+            covered_current_symbols.update(
+                symbol
+                for symbol in component_symbols
+                if current_qty.get(symbol, 0) != 0
+            )
+            continue
+
+        unreconciled.update(
+            symbol
+            for symbol in component_symbols
+            if current_qty.get(symbol, 0) != 0
+        )
+
+    # Any current option inventory absent from surviving historical structures
+    # is orphan inventory and must never be paired heuristically.
+    historical_symbols = set(symbol_to_indices)
+
+    unreconciled.update(
+        symbol
+        for symbol, quantity in current_qty.items()
+        if (
+            quantity != 0
+            and symbol not in covered_current_symbols
+            and (
+                symbol not in historical_symbols
+                or symbol in unreconciled
+            )
+        )
+    )
+
+    # A current symbol in a mismatched component is already included above.
+    # Include any remaining non-covered current option symbols as a final
+    # conservative guard.
+    unreconciled.update(
+        symbol
+        for symbol, quantity in current_qty.items()
+        if quantity != 0 and symbol not in covered_current_symbols
+    )
+
+    reconciled_units = sum(
+        spread.contracts
+        for spread in reconciled
+    )
+
+    return HistoryReconciledSpreadState(
+        spreads=tuple(reconciled),
+        unreconciled_option_symbols=tuple(
+            sorted(unreconciled)
+        ),
+        recovered_history_units=(
+            recovered_history_units
+        ),
+        reconciled_history_units=(
+            reconciled_units
+        ),
+    )
 
 
 def identify_managed_bull_call_spreads(
