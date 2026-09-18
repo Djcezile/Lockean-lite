@@ -104,8 +104,8 @@ def test_recovery_diagnostics_explain_historical_order_shape():
     )
     missing_price = _order(
         legs=(
-            _leg(LONG, "buy_to_open"),
-            _leg(SHORT, "sell_to_open"),
+            _leg("SPY260918C00760000", "buy_to_open"),
+            _leg("SPY260918C00762000", "sell_to_open"),
         ),
     )
     fallback_price = _order(
