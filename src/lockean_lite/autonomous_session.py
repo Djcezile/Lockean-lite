@@ -313,6 +313,12 @@ def run_autonomous_paper_session(
                 elapsed_seconds += risk_check_interval_seconds
                 continue
 
+            for diagnostic in getattr(exit_result, "diagnostics", ()):
+                output_fn(
+                    "POSITION EXIT DIAGNOSTIC: "
+                    f"{diagnostic}"
+                )
+
             if getattr(exit_result, "cancelled_order_ids", ()):
                 output_fn(
                     "POSITION EXIT ORDER: CANCELLED | "
