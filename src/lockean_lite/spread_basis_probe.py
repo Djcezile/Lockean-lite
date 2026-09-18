@@ -9,7 +9,7 @@ from lockean_lite.paper_portfolio_snapshot import (
     read_live_paper_portfolio_snapshot,
 )
 from lockean_lite.position_exit_manager import (
-    identify_managed_debit_spreads,
+    identify_history_reconciled_debit_spreads,
 )
 
 
@@ -29,16 +29,11 @@ def build_live_probe_report(
     recovery_result,
     snapshot,
 ) -> str:
-    spreads = identify_managed_debit_spreads(
-        snapshot,
-        entry_basis_by_structure=(
-            recovery_result.basis_by_structure
-        ),
+    reconciliation = identify_history_reconciled_debit_spreads(
+        snapshot=snapshot,
+        recovery_result=recovery_result,
     )
-    recovered_units = sum(
-        spread.contracts
-        for spread in spreads
-    )
+    recovered_units = reconciliation.reconciled_history_units
     expected_units = int(snapshot.managed_spreads)
     open_symbols = _current_open_option_symbols(snapshot)
 
@@ -59,9 +54,18 @@ def build_live_probe_report(
             "current_open_option_symbols="
             + ",".join(open_symbols)
         ),
+        (
+            "unreconciled_open_option_symbols="
+            + ",".join(
+                reconciliation.unreconciled_option_symbols
+            )
+        ),
     ]
 
-    if recovered_units < expected_units:
+    if (
+        recovered_units < expected_units
+        or reconciliation.unreconciled_option_symbols
+    ):
         lines.append(
             "RESULT: FAIL_CLOSED_BASIS_GAP"
         )
