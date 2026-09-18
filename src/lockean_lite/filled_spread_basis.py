@@ -27,6 +27,10 @@ class SpreadBasisRecoveryDiagnostics:
 @dataclass(frozen=True)
 class SpreadBasisRecoveryResult:
     basis_by_structure: dict[frozenset[str], Decimal]
+    open_lots_by_structure: dict[
+        frozenset[str],
+        tuple[Decimal, ...],
+    ]
     diagnostics: SpreadBasisRecoveryDiagnostics
 
 
@@ -215,12 +219,15 @@ def recover_open_spread_entry_basis(
             lots[structure].pop(0)
 
     recovered = {}
+    open_lots_by_structure = {}
     for structure, remaining_lots in lots.items():
         if not complete[structure] or not remaining_lots:
             continue
+        immutable_lots = tuple(remaining_lots)
+        open_lots_by_structure[structure] = immutable_lots
         recovered[structure] = (
-            sum(remaining_lots, start=Decimal("0"))
-            / Decimal(len(remaining_lots))
+            sum(immutable_lots, start=Decimal("0"))
+            / Decimal(len(immutable_lots))
         )
 
     diagnostics = SpreadBasisRecoveryDiagnostics(
@@ -248,6 +255,7 @@ def recover_open_spread_entry_basis(
 
     return SpreadBasisRecoveryResult(
         basis_by_structure=recovered,
+        open_lots_by_structure=open_lots_by_structure,
         diagnostics=diagnostics,
     )
 
