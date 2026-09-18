@@ -98,8 +98,8 @@ def _carryover_snapshot():
 def test_recovery_diagnostics_explain_historical_order_shape():
     missing_intent = _order(
         legs=(
-            _leg(LONG),
-            _leg(SHORT),
+            _leg("SPY260918C00758000"),
+            _leg("SPY260918C00760000"),
         ),
         filled_avg_price="0.50",
     )
