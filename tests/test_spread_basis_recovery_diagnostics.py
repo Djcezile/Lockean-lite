@@ -12,6 +12,7 @@ from lockean_lite.paper_portfolio_snapshot import (
     PaperPositionSnapshot,
 )
 from lockean_lite.position_exit_manager import run_paper_spread_exit_cycle
+from lockean_lite.spread_basis_probe import build_live_probe_report
 
 
 LONG = "SPY260918P00752000"
@@ -238,4 +239,32 @@ def test_autonomous_session_logs_exit_recovery_diagnostics_before_blocking():
             "POSITION EXIT DIAGNOSTIC: unrecovered_open_symbols="
         )
         for message in messages
+    )
+
+
+def test_live_probe_report_compares_recovered_units_to_open_portfolio():
+    recovery = recover_open_spread_entry_basis(
+        trading_client=HistoryClient(
+            [
+                _order(
+                    legs=(
+                        _leg(LONG, "buy_to_open"),
+                        _leg(SHORT, "sell_to_open"),
+                    ),
+                    filled_avg_price="0.53",
+                )
+            ]
+        )
+    )
+
+    report = build_live_probe_report(
+        recovery_result=recovery,
+        snapshot=_carryover_snapshot(),
+    )
+
+    assert "current_managed_spread_units=1" in report
+    assert "recovered_managed_spread_units=1" in report
+    assert "recovery_matches_open_portfolio=True" in report
+    assert f"current_open_option_symbols={SHORT},{LONG}" in report or (
+        f"current_open_option_symbols={LONG},{SHORT}" in report
     )
