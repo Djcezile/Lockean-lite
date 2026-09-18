@@ -56,6 +56,7 @@ class PaperSpreadExitResult:
     contracts: int | None = None
     long_symbol: str | None = None
     short_symbol: str | None = None
+    diagnostics: tuple[str, ...] = ()
 
 
 def _parse_option_contract(
@@ -447,6 +448,64 @@ def _managed_contracts(spreads) -> int:
     )
 
 
+def _basis_recovery_diagnostic_lines(diagnostic) -> tuple[str, ...]:
+    return (
+        (
+            "basis_recovery_closed_orders_returned="
+            f"{diagnostic.closed_orders_returned}"
+        ),
+        (
+            "basis_recovery_parsed_mleg_orders="
+            f"{diagnostic.parsed_mleg_orders}"
+        ),
+        (
+            "basis_recovery_entry_orders_recognized="
+            f"{diagnostic.entry_orders_recognized}"
+        ),
+        (
+            "basis_recovery_exit_orders_recognized="
+            f"{diagnostic.exit_orders_recognized}"
+        ),
+        (
+            "basis_recovery_missing_position_intent_orders="
+            f"{diagnostic.missing_position_intent_orders}"
+        ),
+        (
+            "basis_recovery_missing_filled_avg_price_entries="
+            f"{diagnostic.missing_filled_avg_price_entries}"
+        ),
+        (
+            "basis_recovery_missing_usable_price_entries="
+            f"{diagnostic.missing_filled_price_entries}"
+        ),
+        (
+            "basis_recovery_limit_price_fallback_entries="
+            f"{diagnostic.limit_price_fallback_entries}"
+        ),
+        (
+            "basis_recovery_fifo_underflow_structures="
+            f"{diagnostic.fifo_underflow_structures}"
+        ),
+        (
+            "basis_recovery_recovered_structures="
+            f"{diagnostic.recovered_structures}"
+        ),
+    )
+
+
+def _open_option_symbols(snapshot: PaperPortfolioSnapshot) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            position.symbol
+            for position in snapshot.positions
+            if (
+                position.qty != 0
+                and _parse_option_contract(position.symbol) is not None
+            )
+        )
+    )
+
+
 def run_paper_spread_exit_cycle(
     *,
     trading_client,
@@ -543,28 +602,42 @@ def run_paper_spread_exit_cycle(
     expected_managed_units = int(snapshot.managed_spreads)
 
     if _managed_contracts(spreads) < expected_managed_units:
-        provider = entry_basis_provider
+        recovery_diagnostics = ()
 
-        if provider is None:
+        if entry_basis_provider is None:
             from lockean_lite.filled_spread_basis import (
-                read_open_spread_entry_basis,
+                recover_open_spread_entry_basis,
             )
 
-            provider = lambda: read_open_spread_entry_basis(
+            recovery_result = recover_open_spread_entry_basis(
                 trading_client=trading_client
             )
+            recovered_basis = recovery_result.basis_by_structure
+            recovery_diagnostics = _basis_recovery_diagnostic_lines(
+                recovery_result.diagnostics
+            )
+        else:
+            recovered_basis = entry_basis_provider()
 
-        recovered_basis = provider()
         spreads = identify_managed_debit_spreads(
             snapshot,
             entry_basis_by_structure=recovered_basis,
         )
 
         if _managed_contracts(spreads) < expected_managed_units:
+            open_symbols = _open_option_symbols(snapshot)
+            unresolved_line = (
+                "unrecovered_open_symbols="
+                + ",".join(open_symbols)
+            )
             return PaperSpreadExitResult(
                 submitted=False,
                 reason="managed_spread_entry_basis_unavailable",
                 block_new_entries=True,
+                diagnostics=(
+                    *recovery_diagnostics,
+                    unresolved_line,
+                ),
             )
 
     if not spreads:
