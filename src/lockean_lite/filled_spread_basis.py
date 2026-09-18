@@ -1,4 +1,5 @@
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -7,6 +8,26 @@ from alpaca.trading.requests import GetOrdersRequest
 
 
 _HISTORY_LIMIT = 500
+
+
+@dataclass(frozen=True)
+class SpreadBasisRecoveryDiagnostics:
+    closed_orders_returned: int
+    parsed_mleg_orders: int
+    entry_orders_recognized: int
+    exit_orders_recognized: int
+    missing_position_intent_orders: int
+    missing_filled_price_entries: int
+    missing_filled_avg_price_entries: int
+    limit_price_fallback_entries: int
+    fifo_underflow_structures: int
+    recovered_structures: int
+
+
+@dataclass(frozen=True)
+class SpreadBasisRecoveryResult:
+    basis_by_structure: dict[frozenset[str], Decimal]
+    diagnostics: SpreadBasisRecoveryDiagnostics
 
 
 def _decimal(value) -> Decimal:
@@ -41,23 +62,23 @@ def _integral_filled_units(order) -> int:
     return int(filled_qty)
 
 
-def _order_structure_and_purpose(order):
+def _classify_mleg_order(order):
     order_class = _enum_text(
         getattr(order, "order_class", "")
     ).lower()
     if order_class != "mleg":
-        return None
+        return None, None, "not_mleg"
 
     legs = tuple(getattr(order, "legs", ()) or ())
     if len(legs) != 2:
-        return None
+        return None, None, "leg_count_invalid"
 
     symbols = tuple(
         str(getattr(leg, "symbol", ""))
         for leg in legs
     )
     if any(not symbol for symbol in symbols):
-        return None
+        return None, None, "leg_symbol_missing"
 
     intents = tuple(
         _enum_text(
@@ -66,46 +87,50 @@ def _order_structure_and_purpose(order):
         for leg in legs
     )
 
-    if intents and all("to_open" in intent for intent in intents):
+    if not intents or any(not intent for intent in intents):
+        return frozenset(symbols), None, "position_intent_missing"
+
+    if all("to_open" in intent for intent in intents):
         purpose = "entry"
-    elif intents and all("to_close" in intent for intent in intents):
+    elif all("to_close" in intent for intent in intents):
         purpose = "exit"
     else:
-        return None
+        return frozenset(symbols), None, "position_intent_mixed"
 
-    return frozenset(symbols), purpose
+    return frozenset(symbols), purpose, None
 
 
-def _entry_debit(order) -> Decimal:
-    filled_price = _decimal(
-        getattr(order, "filled_avg_price", None)
-    )
+def _entry_debit(order) -> tuple[Decimal, bool, bool]:
+    raw_filled_price = getattr(order, "filled_avg_price", None)
+    filled_price = _decimal(raw_filled_price)
+    filled_avg_missing = raw_filled_price is None or filled_price <= 0
+
     if filled_price > 0:
-        return filled_price
+        return filled_price, False, False
 
     # A filled debit MLEG was authorized and submitted with a positive parent
-    # limit debit.  If Alpaca omits the parent filled average, the positive
+    # limit debit. If Alpaca omits the parent filled average, the positive
     # limit is a conservative basis: an actual debit fill cannot be worse
     # than its buy-limit ceiling.
     limit_price = _decimal(
         getattr(order, "limit_price", None)
     )
     if limit_price > 0:
-        return limit_price
+        return limit_price, True, True
 
-    return Decimal("0")
+    return Decimal("0"), filled_avg_missing, False
 
 
-def read_open_spread_entry_basis(*, trading_client):
-    """Recover remaining open debit lots from broker closed MLEG history.
+def recover_open_spread_entry_basis(
+    *,
+    trading_client,
+) -> SpreadBasisRecoveryResult:
+    """Recover remaining open debit lots and explain the recovery path.
 
-    Alpaca can report per-leg option cost bases that do not preserve the
-    original net debit of a filled multi-leg order across sessions.  This
-    function rebuilds the remaining opening lots from authoritative filled
-    MLEG parent orders.  Filled closing orders consume opening lots FIFO.
-
-    Structures whose history is incomplete are omitted so callers can fail
-    closed rather than invent an entry basis.
+    This function is read-only. It queries closed Alpaca orders with nested
+    legs, reconstructs exact two-leg MLEG structures, and consumes filled
+    closing lots FIFO. Any structure with incomplete history is omitted so
+    callers can fail closed rather than invent an entry basis.
     """
 
     orders = trading_client.get_orders(
@@ -126,32 +151,66 @@ def read_open_spread_entry_basis(*, trading_client):
     lots = defaultdict(list)
     complete = defaultdict(lambda: True)
 
+    parsed_mleg_orders = 0
+    entry_orders_recognized = 0
+    exit_orders_recognized = 0
+    missing_position_intent_orders = 0
+    missing_filled_price_entries = 0
+    missing_filled_avg_price_entries = 0
+    limit_price_fallback_entries = 0
+    fifo_underflow_structures: set[frozenset[str]] = set()
+
     for order in ordered:
-        parsed = _order_structure_and_purpose(order)
-        if parsed is None:
+        structure, purpose, reason = _classify_mleg_order(order)
+
+        if reason == "position_intent_missing":
+            missing_position_intent_orders += 1
+            if structure is not None:
+                complete[structure] = False
+                lots[structure].clear()
             continue
 
-        structure, purpose = parsed
+        if reason is not None:
+            continue
+
+        parsed_mleg_orders += 1
         units = _integral_filled_units(order)
         if units <= 0:
             continue
 
         if purpose == "entry":
-            price = _entry_debit(order)
+            entry_orders_recognized += 1
+            price, filled_avg_missing, used_limit_fallback = (
+                _entry_debit(order)
+            )
+
+            if filled_avg_missing:
+                missing_filled_avg_price_entries += 1
+
+            if used_limit_fallback:
+                limit_price_fallback_entries += 1
+
             if price <= 0:
+                missing_filled_price_entries += 1
                 complete[structure] = False
                 lots[structure].clear()
+                continue
+
+            if not complete[structure]:
+                # Historical ambiguity for this exact structure must remain
+                # fail-closed even when a later entry looks valid.
                 continue
 
             for _ in range(units):
                 lots[structure].append(price)
             continue
 
-        # Alpaca positions are netted. Treat filled closing MLEGs as FIFO
-        # consumption of the opening lots for the exact same structure.
+        exit_orders_recognized += 1
+
         for _ in range(units):
             if not lots[structure]:
                 complete[structure] = False
+                fifo_underflow_structures.add(structure)
                 break
             lots[structure].pop(0)
 
@@ -164,4 +223,108 @@ def read_open_spread_entry_basis(*, trading_client):
             / Decimal(len(remaining_lots))
         )
 
-    return recovered
+    diagnostics = SpreadBasisRecoveryDiagnostics(
+        closed_orders_returned=len(orders),
+        parsed_mleg_orders=parsed_mleg_orders,
+        entry_orders_recognized=entry_orders_recognized,
+        exit_orders_recognized=exit_orders_recognized,
+        missing_position_intent_orders=(
+            missing_position_intent_orders
+        ),
+        missing_filled_price_entries=(
+            missing_filled_price_entries
+        ),
+        missing_filled_avg_price_entries=(
+            missing_filled_avg_price_entries
+        ),
+        limit_price_fallback_entries=(
+            limit_price_fallback_entries
+        ),
+        fifo_underflow_structures=len(
+            fifo_underflow_structures
+        ),
+        recovered_structures=len(recovered),
+    )
+
+    return SpreadBasisRecoveryResult(
+        basis_by_structure=recovered,
+        diagnostics=diagnostics,
+    )
+
+
+def read_open_spread_entry_basis(*, trading_client):
+    """Compatibility wrapper returning only recovered entry basis."""
+
+    return recover_open_spread_entry_basis(
+        trading_client=trading_client
+    ).basis_by_structure
+
+
+def _structure_text(structure: frozenset[str]) -> str:
+    return "/".join(sorted(structure))
+
+
+def render_spread_basis_recovery_report(
+    result: SpreadBasisRecoveryResult,
+) -> str:
+    """Render non-sensitive diagnostics for the read-only broker probe."""
+
+    diagnostic = result.diagnostics
+
+    lines = [
+        "LOCKEAN SPREAD BASIS RECOVERY PROBE",
+        "===================================",
+        "MODE: READ ONLY",
+        (
+            "closed_orders_returned="
+            f"{diagnostic.closed_orders_returned}"
+        ),
+        (
+            "parsed_mleg_orders="
+            f"{diagnostic.parsed_mleg_orders}"
+        ),
+        (
+            "entry_orders_recognized="
+            f"{diagnostic.entry_orders_recognized}"
+        ),
+        (
+            "exit_orders_recognized="
+            f"{diagnostic.exit_orders_recognized}"
+        ),
+        (
+            "missing_position_intent_orders="
+            f"{diagnostic.missing_position_intent_orders}"
+        ),
+        (
+            "missing_filled_avg_price_entries="
+            f"{diagnostic.missing_filled_avg_price_entries}"
+        ),
+        (
+            "missing_usable_price_entries="
+            f"{diagnostic.missing_filled_price_entries}"
+        ),
+        (
+            "limit_price_fallback_entries="
+            f"{diagnostic.limit_price_fallback_entries}"
+        ),
+        (
+            "fifo_underflow_structures="
+            f"{diagnostic.fifo_underflow_structures}"
+        ),
+        (
+            "recovered_structures="
+            f"{diagnostic.recovered_structures}"
+        ),
+    ]
+
+    for structure, basis in sorted(
+        result.basis_by_structure.items(),
+        key=lambda item: sorted(item[0]),
+    ):
+        lines.append(
+            "RECOVERED STRUCTURE: "
+            f"{_structure_text(structure)} | "
+            f"entry_debit={basis}"
+        )
+
+    return "\n".join(lines)
