@@ -865,49 +865,110 @@ def run_paper_spread_exit_cycle(
             cancelled_order_ids=tuple(cancelled_ids),
         )
 
-    spreads = identify_managed_debit_spreads(snapshot)
     expected_managed_units = int(snapshot.managed_spreads)
+    recovery_diagnostics = ()
+    unreconciled_symbols: tuple[str, ...] = ()
 
-    if _managed_contracts(spreads) < expected_managed_units:
-        recovery_diagnostics = ()
-
-        if entry_basis_provider is None:
-            from lockean_lite.filled_spread_basis import (
-                recover_open_spread_entry_basis,
-            )
-
-            recovery_result = recover_open_spread_entry_basis(
-                trading_client=trading_client
-            )
-            recovered_basis = recovery_result.basis_by_structure
-            recovery_diagnostics = _basis_recovery_diagnostic_lines(
-                recovery_result.diagnostics
-            )
-        else:
-            recovered_basis = entry_basis_provider()
-
-        spreads = identify_managed_debit_spreads(
-            snapshot,
-            entry_basis_by_structure=recovered_basis,
+    # Production TradingClient exposes get_orders. When broker history is
+    # available, exact filled MLEG history is authoritative for spread
+    # identity. Net positions only prove whether those historical structures
+    # still exist; they never invent a nearest-strike vertical.
+    if (
+        entry_basis_provider is None
+        and hasattr(trading_client, "get_orders")
+    ):
+        from lockean_lite.filled_spread_basis import (
+            recover_open_spread_entry_basis,
         )
 
-        if _managed_contracts(spreads) < expected_managed_units:
+        recovery_result = recover_open_spread_entry_basis(
+            trading_client=trading_client
+        )
+        recovery_diagnostics = _basis_recovery_diagnostic_lines(
+            recovery_result.diagnostics
+        )
+
+        if (
+            expected_managed_units > 0
+            and not recovery_result.basis_by_structure
+        ):
             open_symbols = _open_option_symbols(snapshot)
-            unresolved_line = (
-                "unrecovered_open_symbols="
-                + ",".join(open_symbols)
-            )
             return PaperSpreadExitResult(
                 submitted=False,
                 reason="managed_spread_entry_basis_unavailable",
                 block_new_entries=True,
                 diagnostics=(
                     *recovery_diagnostics,
-                    unresolved_line,
+                    (
+                        "unrecovered_open_symbols="
+                        + ",".join(open_symbols)
+                    ),
                 ),
             )
 
+        history_state = identify_history_reconciled_debit_spreads(
+            snapshot=snapshot,
+            recovery_result=recovery_result,
+        )
+        spreads = history_state.spreads
+        unreconciled_symbols = (
+            history_state.unreconciled_option_symbols
+        )
+
+        if unreconciled_symbols:
+            recovery_diagnostics = (
+                *recovery_diagnostics,
+                (
+                    "history_recovered_spread_units="
+                    f"{history_state.recovered_history_units}"
+                ),
+                (
+                    "history_reconciled_spread_units="
+                    f"{history_state.reconciled_history_units}"
+                ),
+                (
+                    "unreconciled_open_option_symbols="
+                    + ",".join(unreconciled_symbols)
+                ),
+            )
+    else:
+        # Compatibility path for deterministic unit tests and explicit
+        # injected-basis callers. Production uses the history-led path above.
+        spreads = identify_managed_debit_spreads(snapshot)
+
+        if _managed_contracts(spreads) < expected_managed_units:
+            recovered_basis = (
+                entry_basis_provider()
+                if entry_basis_provider is not None
+                else {}
+            )
+
+            spreads = identify_managed_debit_spreads(
+                snapshot,
+                entry_basis_by_structure=recovered_basis,
+            )
+
+            if _managed_contracts(spreads) < expected_managed_units:
+                open_symbols = _open_option_symbols(snapshot)
+                return PaperSpreadExitResult(
+                    submitted=False,
+                    reason="managed_spread_entry_basis_unavailable",
+                    block_new_entries=True,
+                    diagnostics=(
+                        "unrecovered_open_symbols="
+                        + ",".join(open_symbols),
+                    ),
+                )
+
     if not spreads:
+        if unreconciled_symbols:
+            return PaperSpreadExitResult(
+                submitted=False,
+                reason="managed_spread_inventory_unreconciled",
+                block_new_entries=True,
+                diagnostics=recovery_diagnostics,
+            )
+
         return PaperSpreadExitResult(
             submitted=False,
             reason="no_managed_spread_detected",
@@ -972,6 +1033,19 @@ def run_paper_spread_exit_cycle(
                 submitted=False,
                 reason="spread_exit_quote_unavailable",
                 block_new_entries=True,
+                diagnostics=(
+                    recovery_diagnostics
+                    if unreconciled_symbols
+                    else ()
+                ),
+            )
+
+        if unreconciled_symbols:
+            return PaperSpreadExitResult(
+                submitted=False,
+                reason="managed_spread_inventory_unreconciled",
+                block_new_entries=True,
+                diagnostics=recovery_diagnostics,
             )
 
         return PaperSpreadExitResult(
@@ -1035,4 +1109,9 @@ def run_paper_spread_exit_cycle(
         contracts=spread.contracts,
         long_symbol=spread.long_symbol,
         short_symbol=spread.short_symbol,
+        diagnostics=(
+            recovery_diagnostics
+            if unreconciled_symbols
+            else ()
+        ),
     )
