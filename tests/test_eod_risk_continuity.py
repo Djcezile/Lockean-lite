@@ -136,10 +136,13 @@ def test_triggered_exit_can_submit_inside_eod_entry_cutoff():
     now = datetime(2026, 9, 21, 19, 57, tzinfo=timezone.utc)
     cleanup_calls = []
     cycle_calls = []
+    snapshot = _portfolio(
+        pending_orders=(_pending("entry-1", "entry"),)
+    )
 
     summary = run_autonomous_paper_session(
         clock_provider=lambda: _near_close_clock(now),
-        portfolio_provider=_portfolio,
+        portfolio_provider=lambda: snapshot,
         cycle_runner=lambda: cycle_calls.append("entry"),
         exit_runner=lambda snapshot: _exit_result(
             submitted=True,
@@ -161,7 +164,7 @@ def test_triggered_exit_can_submit_inside_eod_entry_cutoff():
         max_iterations=1,
     )
 
-    assert cleanup_calls == []
+    assert cleanup_calls == ["cleanup"]
     assert cycle_calls == []
     assert summary.last_status == "EXIT_SUBMITTED"
     assert summary.last_reason == "take_profit_exit_submitted"
