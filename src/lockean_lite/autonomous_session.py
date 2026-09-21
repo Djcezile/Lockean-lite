@@ -65,14 +65,88 @@ def _seconds_until_market_close(*, clock, now: datetime) -> float | None:
     ).total_seconds()
 
 
-def _cancel_pending_mleg_orders(*, trading_client, snapshot) -> tuple[str, ...]:
+def _cancel_pending_entry_mleg_orders(
+    *,
+    trading_client,
+    snapshot,
+) -> tuple[str, ...]:
+    pending_orders = tuple(
+        getattr(snapshot, "pending_mleg_orders", ())
+    )
+
+    # Unknown purpose means Lockean cannot prove that cancellation would only
+    # reduce prospective exposure. Validate the whole snapshot before sending
+    # any cancellation so cleanup itself is atomic and fail-closed.
+    if any(
+        order.purpose == "unknown"
+        for order in pending_orders
+    ):
+        raise ValueError("pending_mleg_order_purpose_unknown")
+
+    entry_orders = tuple(
+        order
+        for order in pending_orders
+        if order.purpose == "entry"
+    )
+
+    if any(not order.order_id for order in entry_orders):
+        raise ValueError("pending_entry_order_id_missing")
+
     cancelled_ids = []
-    for order in getattr(snapshot, "pending_mleg_orders", ()):
-        if not order.order_id:
-            raise ValueError("pending_mleg_order_id_missing")
+    for order in entry_orders:
         trading_client.cancel_order_by_id(order.order_id)
         cancelled_ids.append(order.order_id)
+
     return tuple(cancelled_ids)
+
+
+def _cancel_pending_mleg_orders(*, trading_client, snapshot) -> tuple[str, ...]:
+    """Compatibility wrapper: EOD cleanup now cancels entries only."""
+
+    return _cancel_pending_entry_mleg_orders(
+        trading_client=trading_client,
+        snapshot=snapshot,
+    )
+
+
+def _run_eod_entry_cleanup(
+    *,
+    snapshot,
+    end_of_day_cancel_runner,
+    output_fn,
+) -> str | None:
+    cleanup_error_reason = None
+
+    if end_of_day_cancel_runner is not None:
+        try:
+            cancelled_ids = end_of_day_cancel_runner(snapshot)
+        except Exception as error:
+            cleanup_error_reason = safe_exception_reason(error)
+            output_fn(
+                "EOD ORDER CLEANUP: ERROR | "
+                f"{type(error).__name__} | {cleanup_error_reason}"
+            )
+            output_fn(
+                "FAIL CLOSED: no new entry near market close"
+            )
+        else:
+            if cancelled_ids:
+                output_fn(
+                    "EOD ORDER CLEANUP: CANCELLED ENTRY | "
+                    + ",".join(cancelled_ids)
+                )
+            else:
+                output_fn(
+                    "EOD ORDER CLEANUP: "
+                    "NO PENDING ENTRY MLEG ORDERS"
+                )
+
+    output_fn(
+        "EOD ENTRY CUTOFF: no new positions will be opened; "
+        "position risk checks remain active"
+    )
+
+    return cleanup_error_reason
 
 
 def _summary(*, iterations, trade_cycles, last_status, last_reason):
@@ -250,43 +324,14 @@ def run_autonomous_paper_session(
         )
         cutoff_seconds = end_of_day_entry_cutoff_minutes * 60
 
-        if seconds_to_close is not None and seconds_to_close <= cutoff_seconds:
-            last_status = "EOD_ENTRY_BLOCKED"
-            last_reason = "end_of_day_entry_cutoff"
+        eod_entry_cutoff_active = (
+            seconds_to_close is not None
+            and seconds_to_close <= cutoff_seconds
+        )
 
-            if end_of_day_cancel_runner is not None:
-                try:
-                    cancelled_ids = end_of_day_cancel_runner(snapshot)
-                except Exception as error:
-                    last_reason = safe_exception_reason(error)
-                    output_fn(
-                        "EOD ORDER CLEANUP: ERROR | "
-                        f"{type(error).__name__} | {last_reason}"
-                    )
-                    output_fn("FAIL CLOSED: no new entry near market close")
-                else:
-                    if cancelled_ids:
-                        output_fn(
-                            "EOD ORDER CLEANUP: CANCELLED | "
-                            + ",".join(cancelled_ids)
-                        )
-                    else:
-                        output_fn("EOD ORDER CLEANUP: NO PENDING MLEG ORDERS")
-
-            output_fn("EOD ENTRY CUTOFF: no new positions will be opened")
-            if max_iterations is not None and iterations >= max_iterations:
-                return _summary(
-                    iterations=iterations,
-                    trade_cycles=trade_cycles,
-                    last_status=last_status,
-                    last_reason=last_reason,
-                )
-            output_fn(next_check_message)
-            sleep_fn(risk_check_interval_seconds)
-            elapsed_seconds += risk_check_interval_seconds
-            continue
-
-        # Risk and reconciliation are intentionally evaluated on every loop.
+        # Risk and reconciliation are intentionally evaluated on every loop,
+        # including the final entry-cutoff window. EOD policy may stop new
+        # exposure, but it must never suspend management of existing risk.
         # Fresh AI entry decisions are scheduled independently below.
         if exit_runner is not None:
             try:
@@ -301,6 +346,12 @@ def run_autonomous_paper_session(
                 output_fn(
                     "FAIL CLOSED: no new entry while exit state is unavailable"
                 )
+                if eod_entry_cutoff_active:
+                    _run_eod_entry_cleanup(
+                        snapshot=snapshot,
+                        end_of_day_cancel_runner=end_of_day_cancel_runner,
+                        output_fn=output_fn,
+                    )
                 if max_iterations is not None and iterations >= max_iterations:
                     return _summary(
                         iterations=iterations,
@@ -342,6 +393,12 @@ def run_autonomous_paper_session(
                 _log_exit_pricing(output_fn, exit_result)
                 if exit_result.broker_order_id is not None:
                     output_fn(f"ALPACA EXIT ORDER ID: {exit_result.broker_order_id}")
+                if eod_entry_cutoff_active:
+                    _run_eod_entry_cleanup(
+                        snapshot=snapshot,
+                        end_of_day_cancel_runner=end_of_day_cancel_runner,
+                        output_fn=output_fn,
+                    )
                 if max_iterations is not None and iterations >= max_iterations:
                     return _summary(
                         iterations=iterations,
@@ -361,6 +418,12 @@ def run_autonomous_paper_session(
                     "POSITION EXIT CHECK: BLOCKING NEW ENTRY | "
                     f"{exit_result.reason}"
                 )
+                if eod_entry_cutoff_active:
+                    _run_eod_entry_cleanup(
+                        snapshot=snapshot,
+                        end_of_day_cancel_runner=end_of_day_cancel_runner,
+                        output_fn=output_fn,
+                    )
                 if max_iterations is not None and iterations >= max_iterations:
                     return _summary(
                         iterations=iterations,
@@ -374,6 +437,30 @@ def run_autonomous_paper_session(
                 continue
 
             output_fn(f"POSITION EXIT CHECK: {exit_result.reason}")
+
+        if eod_entry_cutoff_active:
+            last_status = "EOD_ENTRY_BLOCKED"
+            last_reason = "end_of_day_entry_cutoff"
+            cleanup_error_reason = _run_eod_entry_cleanup(
+                snapshot=snapshot,
+                end_of_day_cancel_runner=end_of_day_cancel_runner,
+                output_fn=output_fn,
+            )
+            if cleanup_error_reason is not None:
+                last_reason = cleanup_error_reason
+
+            if max_iterations is not None and iterations >= max_iterations:
+                return _summary(
+                    iterations=iterations,
+                    trade_cycles=trade_cycles,
+                    last_status=last_status,
+                    last_reason=last_reason,
+                )
+
+            output_fn(next_check_message)
+            sleep_fn(risk_check_interval_seconds)
+            elapsed_seconds += risk_check_interval_seconds
+            continue
 
         if entry_order_maintenance_runner is not None:
             try:
@@ -646,8 +733,8 @@ def main(argv=None) -> int:
         type=int,
         default=DEFAULT_EOD_ENTRY_CUTOFF_MINUTES,
         help=(
-            "Stop new entries and cancel pending MLEG orders this many minutes "
-            "before market close."
+            "Stop new entries and cancel pending ENTRY MLEG orders this many "
+            "minutes before market close while position risk checks continue."
         ),
     )
 
@@ -693,7 +780,7 @@ def main(argv=None) -> int:
         )
 
     def end_of_day_cancel_runner(snapshot):
-        return _cancel_pending_mleg_orders(
+        return _cancel_pending_entry_mleg_orders(
             trading_client=trading_client,
             snapshot=snapshot,
         )
