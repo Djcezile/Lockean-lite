@@ -7,6 +7,7 @@ from decimal import Decimal, ROUND_CEILING, ROUND_DOWN
 from alpaca.data.requests import (
     OptionLatestQuoteRequest,
 )
+from alpaca.trading.requests import ReplaceOrderRequest
 
 from lockean_lite.alpaca_execution_adapter import (
     build_managed_spread_close_order,
@@ -639,15 +640,9 @@ def _take_profit_limit_credit(
     if price_concession < 0:
         raise ValueError("take_profit_price_concession_must_be_non_negative")
 
-    target_credit = (
-        spread.entry_debit_per_contract
-        * (
-            Decimal("1")
-            + take_profit_percent / Decimal("100")
-        )
-    ).quantize(
-        Decimal("0.01"),
-        rounding=ROUND_CEILING,
+    target_credit = _take_profit_target_credit(
+        spread=spread,
+        take_profit_percent=take_profit_percent,
     )
 
     target_credit = min(target_credit, observed_close_credit)
@@ -663,6 +658,23 @@ def _take_profit_limit_credit(
         target_credit,
         conceded_credit,
         Decimal("0.01"),
+    )
+
+
+def _take_profit_target_credit(
+    *,
+    spread: ManagedBullCallSpread,
+    take_profit_percent: Decimal,
+) -> Decimal:
+    return (
+        spread.entry_debit_per_contract
+        * (
+            Decimal("1")
+            + take_profit_percent / Decimal("100")
+        )
+    ).quantize(
+        Decimal("0.01"),
+        rounding=ROUND_CEILING,
     )
 
 
@@ -706,6 +718,172 @@ def _pending_exit_state(
             stale_orders.append(order)
 
     return tuple(stale_orders), tuple(covered_structures)
+
+
+def _cancel_stale_exit_orders(
+    *,
+    trading_client,
+    stale_orders,
+) -> PaperSpreadExitResult:
+    cancelled_ids = []
+
+    for order in stale_orders:
+        if not order.order_id:
+            return PaperSpreadExitResult(
+                submitted=False,
+                reason="stale_exit_order_id_missing",
+                block_new_entries=True,
+            )
+
+        trading_client.cancel_order_by_id(order.order_id)
+        cancelled_ids.append(order.order_id)
+
+    return PaperSpreadExitResult(
+        submitted=False,
+        reason="stale_exit_order_cancelled",
+        block_new_entries=True,
+        cancelled_order_ids=tuple(cancelled_ids),
+    )
+
+
+def _maintain_stale_exit_order(
+    *,
+    trading_client,
+    option_data_client,
+    order,
+    spreads: tuple[ManagedBullCallSpread, ...],
+    take_profit_percent: Decimal,
+    take_profit_price_concession: Decimal,
+) -> PaperSpreadExitResult:
+    structure = frozenset(order.symbols)
+    spread = next(
+        (
+            candidate
+            for candidate in spreads
+            if frozenset(
+                {candidate.long_symbol, candidate.short_symbol}
+            ) == structure
+        ),
+        None,
+    )
+    limit_price = getattr(order, "limit_price", None)
+
+    if spread is None or not order.order_id or limit_price is None:
+        return _cancel_stale_exit_orders(
+            trading_client=trading_client,
+            stale_orders=(order,),
+        )
+
+    working_credit = abs(Decimal(str(limit_price)))
+    target_credit = _take_profit_target_credit(
+        spread=spread,
+        take_profit_percent=take_profit_percent,
+    )
+
+    # A stale close priced below the take-profit floor may be a stop-loss
+    # order. Preserve the established conservative cancel-and-reconcile path
+    # because price alone cannot prove that order's original trigger.
+    if working_credit < target_credit:
+        return _cancel_stale_exit_orders(
+            trading_client=trading_client,
+            stale_orders=(order,),
+        )
+
+    working_return = _expected_return_percent(
+        spread=spread,
+        close_credit=working_credit,
+    ).quantize(Decimal("0.01"))
+
+    if working_credit == target_credit:
+        return PaperSpreadExitResult(
+            submitted=False,
+            reason="take_profit_exit_at_floor",
+            expected_return_percent=working_return,
+            block_new_entries=False,
+            submitted_limit_credit=working_credit,
+            submitted_limit_return_percent=working_return,
+            entry_debit_per_contract=spread.entry_debit_per_contract,
+            contracts=spread.contracts,
+            long_symbol=spread.long_symbol,
+            short_symbol=spread.short_symbol,
+        )
+
+    try:
+        close_credit = _read_executable_close_credit(
+            option_data_client=option_data_client,
+            spread=spread,
+        )
+    except ValueError:
+        return PaperSpreadExitResult(
+            submitted=False,
+            reason="spread_exit_quote_unavailable",
+            block_new_entries=True,
+        )
+
+    expected_return = _expected_return_percent(
+        spread=spread,
+        close_credit=close_credit,
+    )
+    replacement_credit = working_credit
+
+    if expected_return >= take_profit_percent:
+        replacement_credit = _take_profit_limit_credit(
+            spread=spread,
+            observed_close_credit=close_credit,
+            take_profit_percent=take_profit_percent,
+            price_concession=take_profit_price_concession,
+        )
+
+    if replacement_credit >= working_credit:
+        return PaperSpreadExitResult(
+            submitted=False,
+            reason="take_profit_exit_working",
+            expected_return_percent=(
+                expected_return.quantize(Decimal("0.01"))
+            ),
+            block_new_entries=False,
+            observed_close_credit=close_credit,
+            submitted_limit_credit=working_credit,
+            submitted_limit_return_percent=working_return,
+            entry_debit_per_contract=spread.entry_debit_per_contract,
+            contracts=spread.contracts,
+            long_symbol=spread.long_symbol,
+            short_symbol=spread.short_symbol,
+        )
+
+    replacement = trading_client.replace_order_by_id(
+        order.order_id,
+        ReplaceOrderRequest(
+            limit_price=float(-replacement_credit)
+        ),
+    )
+    replacement_id = (
+        getattr(replacement, "id", None)
+        or order.order_id
+    )
+    replacement_return = _expected_return_percent(
+        spread=spread,
+        close_credit=replacement_credit,
+    )
+
+    return PaperSpreadExitResult(
+        submitted=True,
+        reason="take_profit_exit_replaced",
+        broker_order_id=str(replacement_id),
+        expected_return_percent=(
+            expected_return.quantize(Decimal("0.01"))
+        ),
+        block_new_entries=False,
+        observed_close_credit=close_credit,
+        submitted_limit_credit=replacement_credit,
+        submitted_limit_return_percent=(
+            replacement_return.quantize(Decimal("0.01"))
+        ),
+        entry_debit_per_contract=spread.entry_debit_per_contract,
+        contracts=spread.contracts,
+        long_symbol=spread.long_symbol,
+        short_symbol=spread.short_symbol,
+    )
 
 
 def _managed_contracts(spreads) -> int:
@@ -844,27 +1022,6 @@ def run_paper_spread_exit_cycle(
         )
     )
 
-    if stale_exit_orders:
-        cancelled_ids = []
-
-        for order in stale_exit_orders:
-            if not order.order_id:
-                return PaperSpreadExitResult(
-                    submitted=False,
-                    reason="stale_exit_order_id_missing",
-                    block_new_entries=True,
-                )
-
-            trading_client.cancel_order_by_id(order.order_id)
-            cancelled_ids.append(order.order_id)
-
-        return PaperSpreadExitResult(
-            submitted=False,
-            reason="stale_exit_order_cancelled",
-            block_new_entries=True,
-            cancelled_order_ids=tuple(cancelled_ids),
-        )
-
     expected_managed_units = int(snapshot.managed_spreads)
     recovery_diagnostics = ()
     unreconciled_symbols: tuple[str, ...] = ()
@@ -961,6 +1118,12 @@ def run_paper_spread_exit_cycle(
                 )
 
     if not spreads:
+        if stale_exit_orders:
+            return _cancel_stale_exit_orders(
+                trading_client=trading_client,
+                stale_orders=stale_exit_orders,
+            )
+
         if unreconciled_symbols:
             return PaperSpreadExitResult(
                 submitted=False,
@@ -972,6 +1135,39 @@ def run_paper_spread_exit_cycle(
         return PaperSpreadExitResult(
             submitted=False,
             reason="no_managed_spread_detected",
+        )
+
+    if stale_exit_orders:
+        maintained_results = []
+
+        for order in stale_exit_orders:
+            result = _maintain_stale_exit_order(
+                trading_client=trading_client,
+                option_data_client=option_data_client,
+                order=order,
+                spreads=spreads,
+                take_profit_percent=take_profit_percent,
+                take_profit_price_concession=(
+                    take_profit_price_concession
+                ),
+            )
+
+            if (
+                result.submitted
+                or result.block_new_entries
+                or result.cancelled_order_ids
+            ):
+                return result
+
+            maintained_results.append(result)
+
+        return next(
+            (
+                result
+                for result in maintained_results
+                if result.reason == "take_profit_exit_working"
+            ),
+            maintained_results[0],
         )
 
     stop_candidates = []

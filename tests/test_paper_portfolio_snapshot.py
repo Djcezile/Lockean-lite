@@ -52,6 +52,7 @@ def _order(
     order_class="mleg",
     purpose="entry",
     order_id="order-1",
+    limit_price=None,
 ):
     if purpose == "entry":
         intents = (
@@ -83,6 +84,7 @@ def _order(
         id=order_id,
         qty=str(qty),
         filled_qty=str(filled_qty),
+        limit_price=limit_price,
         order_class=SimpleNamespace(
             value=order_class
         ),
@@ -192,6 +194,23 @@ def test_portfolio_snapshot_separates_pending_exit_from_pending_entry():
     assert "PENDING ENTRY SPREAD UNITS: 1" in output
     assert "PENDING EXIT SPREAD UNITS: 2" in output
     assert "COMMITTED SPREAD UNITS: 4" in output
+
+
+def test_portfolio_snapshot_preserves_signed_mleg_limit_price():
+    snapshot = create_paper_portfolio_snapshot(
+        account=_account(),
+        positions=(),
+        open_orders=(
+            _order(
+                1,
+                purpose="exit",
+                order_id="exit-1",
+                limit_price="-0.72",
+            ),
+        ),
+    )
+
+    assert snapshot.pending_mleg_orders[0].limit_price == Decimal("-0.72")
 
 
 def test_rendered_portfolio_telemetry_surfaces_alpaca_equity_and_pnl():

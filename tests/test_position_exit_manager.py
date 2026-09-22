@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -107,6 +108,7 @@ class FakeTradingClient:
     def __init__(self):
         self.orders = []
         self.cancelled = []
+        self.replacements = []
 
     def submit_order(self, *, order_data):
         self.orders.append(order_data)
@@ -114,6 +116,10 @@ class FakeTradingClient:
 
     def cancel_order_by_id(self, order_id):
         self.cancelled.append(order_id)
+
+    def replace_order_by_id(self, order_id, order_data):
+        self.replacements.append((order_id, order_data))
+        return SimpleNamespace(id="replacement-exit-001")
 
 
 def test_identifies_existing_bull_call_as_one_managed_spread():
@@ -217,7 +223,7 @@ def test_legacy_pending_mleg_still_blocks_conservatively():
     assert result.reason == "pending_mleg_order_exists"
 
 
-def test_stale_exit_order_is_cancelled_for_reprice_on_next_cycle():
+def test_stale_exit_without_price_is_cancelled_conservatively():
     now = datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
     pending = PendingMlegOrderSnapshot(
         order_id="stale-exit",
@@ -249,6 +255,168 @@ def test_stale_exit_order_is_cancelled_for_reprice_on_next_cycle():
     assert result.block_new_entries
     assert result.cancelled_order_ids == ("stale-exit",)
     assert trading_client.cancelled == ["stale-exit"]
+
+
+def test_stale_take_profit_is_replaced_without_a_cancel_above_floor():
+    now = datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
+    pending = PendingMlegOrderSnapshot(
+        order_id="stale-take-profit",
+        remaining_units=1,
+        purpose="exit",
+        submitted_at=now - timedelta(minutes=5),
+        symbols=(
+            "SPY260918C00782000",
+            "SPY260918C00785000",
+        ),
+        limit_price=Decimal("-0.75"),
+    )
+    trading_client = FakeTradingClient()
+
+    result = run_paper_spread_exit_cycle(
+        trading_client=trading_client,
+        option_data_client=FakeOptionDataClient(
+            long_bid=Decimal("1.20"),
+            short_ask=Decimal("0.45"),
+        ),
+        snapshot=_snapshot(
+            pending=1,
+            pending_orders=(pending,),
+        ),
+        take_profit_percent=Decimal("20"),
+        exit_order_timeout_seconds=240,
+        now_fn=lambda: now,
+    )
+
+    assert result.submitted
+    assert result.reason == "take_profit_exit_replaced"
+    assert result.submitted_limit_credit == Decimal("0.73")
+    assert result.submitted_limit_return_percent == Decimal("21.67")
+    assert trading_client.cancelled == []
+    assert len(trading_client.replacements) == 1
+    order_id, replacement = trading_client.replacements[0]
+    assert order_id == "stale-take-profit"
+    assert replacement.limit_price == -0.73
+
+
+def test_stale_take_profit_at_floor_remains_working_without_churn():
+    now = datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
+    pending = PendingMlegOrderSnapshot(
+        order_id="take-profit-at-floor",
+        remaining_units=1,
+        purpose="exit",
+        submitted_at=now - timedelta(minutes=5),
+        symbols=(
+            "SPY260918C00782000",
+            "SPY260918C00785000",
+        ),
+        limit_price=Decimal("-0.72"),
+    )
+    trading_client = FakeTradingClient()
+
+    result = run_paper_spread_exit_cycle(
+        trading_client=trading_client,
+        option_data_client=FakeOptionDataClient(
+            long_bid=Decimal("1.20"),
+            short_ask=Decimal("0.45"),
+        ),
+        snapshot=_snapshot(
+            pending=1,
+            pending_orders=(pending,),
+        ),
+        take_profit_percent=Decimal("20"),
+        exit_order_timeout_seconds=240,
+        now_fn=lambda: now,
+    )
+
+    assert not result.submitted
+    assert result.reason == "take_profit_exit_at_floor"
+    assert not result.block_new_entries
+    assert trading_client.cancelled == []
+    assert trading_client.replacements == []
+
+
+def test_floor_order_does_not_starve_repricing_for_another_structure():
+    now = datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
+    positions = (
+        *_snapshot().positions,
+        _position(
+            symbol="SPY260918C00788000",
+            qty=1,
+            market_value="120",
+            cost_basis="100",
+            unrealized_pl="20",
+        ),
+        _position(
+            symbol="SPY260918C00790000",
+            qty=-1,
+            market_value="-45",
+            cost_basis="-40",
+            unrealized_pl="-5",
+        ),
+    )
+    snapshot = _snapshot(pending=2)
+    snapshot = replace(
+        snapshot,
+        positions=positions,
+        option_contract_units=Decimal("4"),
+        managed_spreads=2,
+        pending_mleg_orders=(
+            PendingMlegOrderSnapshot(
+                order_id="floor-order",
+                remaining_units=1,
+                purpose="exit",
+                submitted_at=now - timedelta(minutes=5),
+                symbols=(
+                    "SPY260918C00782000",
+                    "SPY260918C00785000",
+                ),
+                limit_price=Decimal("-0.72"),
+            ),
+            PendingMlegOrderSnapshot(
+                order_id="reprice-order",
+                remaining_units=1,
+                purpose="exit",
+                submitted_at=now - timedelta(minutes=5),
+                symbols=(
+                    "SPY260918C00788000",
+                    "SPY260918C00790000",
+                ),
+                limit_price=Decimal("-0.75"),
+            ),
+        ),
+    )
+
+    class MultiSpreadOptionDataClient:
+        def get_option_latest_quote(self, request):
+            return {
+                symbol: SimpleNamespace(
+                    bid_price=(
+                        Decimal("1.20")
+                        if symbol.endswith(("782000", "788000"))
+                        else Decimal("0.01")
+                    ),
+                    ask_price=(
+                        Decimal("0.45")
+                        if symbol.endswith(("785000", "790000"))
+                        else Decimal("9.99")
+                    ),
+                )
+                for symbol in request.symbol_or_symbols
+            }
+
+    trading_client = FakeTradingClient()
+    result = run_paper_spread_exit_cycle(
+        trading_client=trading_client,
+        option_data_client=MultiSpreadOptionDataClient(),
+        snapshot=snapshot,
+        take_profit_percent=Decimal("20"),
+        exit_order_timeout_seconds=240,
+        now_fn=lambda: now,
+    )
+
+    assert result.reason == "take_profit_exit_replaced"
+    assert trading_client.replacements[0][0] == "reprice-order"
+    assert trading_client.cancelled == []
 
 
 def test_active_pending_exit_does_not_globally_block_new_entries():

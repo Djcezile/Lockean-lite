@@ -28,6 +28,7 @@ class PendingMlegOrderSnapshot:
     purpose: str
     submitted_at: datetime | None
     symbols: tuple[str, ...]
+    limit_price: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +144,16 @@ def _pending_mleg_orders(open_orders) -> tuple[PendingMlegOrderSnapshot, ...]:
             submitted_at = None
 
         order_id = getattr(order, "id", None)
+        raw_limit_price = getattr(
+            order,
+            "limit_price",
+            None,
+        )
+        limit_price = (
+            _decimal(raw_limit_price)
+            if raw_limit_price is not None
+            else None
+        )
 
         pending_orders.append(
             PendingMlegOrderSnapshot(
@@ -155,6 +166,7 @@ def _pending_mleg_orders(open_orders) -> tuple[PendingMlegOrderSnapshot, ...]:
                 purpose=purpose,
                 submitted_at=submitted_at,
                 symbols=symbols,
+                limit_price=limit_price,
             )
         )
 
