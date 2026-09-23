@@ -16,6 +16,7 @@ from lockean_lite.paper_portfolio_snapshot import (
     PaperPortfolioSnapshot,
     PaperPositionSnapshot,
 )
+from lockean_lite.safe_error_reporting import safe_exception_reason
 
 
 _OCC_OPTION_PATTERN = re.compile(
@@ -66,6 +67,15 @@ class PaperSpreadExitResult:
     long_symbol: str | None = None
     short_symbol: str | None = None
     diagnostics: tuple[str, ...] = ()
+
+
+def _raise_spread_exit_stage_failure(*, stage: str, error: Exception):
+    """Attach a safe operation stage without exposing broker text."""
+
+    raise ValueError(
+        f"spread_exit_{stage}_failed:"
+        f"{safe_exception_reason(error)}"
+    ) from error
 
 
 def _parse_option_contract(
@@ -735,7 +745,13 @@ def _cancel_stale_exit_orders(
                 block_new_entries=True,
             )
 
-        trading_client.cancel_order_by_id(order.order_id)
+        try:
+            trading_client.cancel_order_by_id(order.order_id)
+        except Exception as error:
+            _raise_spread_exit_stage_failure(
+                stage="cancel",
+                error=error,
+            )
         cancelled_ids.append(order.order_id)
 
     return PaperSpreadExitResult(
@@ -819,6 +835,11 @@ def _maintain_stale_exit_order(
             reason="spread_exit_quote_unavailable",
             block_new_entries=True,
         )
+    except Exception as error:
+        _raise_spread_exit_stage_failure(
+            stage="quote_read",
+            error=error,
+        )
 
     expected_return = _expected_return_percent(
         spread=spread,
@@ -851,12 +872,18 @@ def _maintain_stale_exit_order(
             short_symbol=spread.short_symbol,
         )
 
-    replacement = trading_client.replace_order_by_id(
-        order.order_id,
-        ReplaceOrderRequest(
-            limit_price=float(-replacement_credit)
-        ),
-    )
+    try:
+        replacement = trading_client.replace_order_by_id(
+            order.order_id,
+            ReplaceOrderRequest(
+                limit_price=float(-replacement_credit)
+            ),
+        )
+    except Exception as error:
+        _raise_spread_exit_stage_failure(
+            stage="replace",
+            error=error,
+        )
     replacement_id = (
         getattr(replacement, "id", None)
         or order.order_id
@@ -1038,9 +1065,15 @@ def run_paper_spread_exit_cycle(
             recover_open_spread_entry_basis,
         )
 
-        recovery_result = recover_open_spread_entry_basis(
-            trading_client=trading_client
-        )
+        try:
+            recovery_result = recover_open_spread_entry_basis(
+                trading_client=trading_client
+            )
+        except Exception as error:
+            _raise_spread_exit_stage_failure(
+                stage="history_read",
+                error=error,
+            )
         recovery_diagnostics = _basis_recovery_diagnostic_lines(
             recovery_result.diagnostics
         )
@@ -1190,6 +1223,11 @@ def run_paper_spread_exit_cycle(
         except ValueError:
             quote_failures += 1
             continue
+        except Exception as error:
+            _raise_spread_exit_stage_failure(
+                stage="quote_read",
+                error=error,
+            )
 
         expected_return = _expected_return_percent(
             spread=spread,
@@ -1278,9 +1316,15 @@ def run_paper_spread_exit_cycle(
         limit_credit=submitted_limit_credit,
     )
 
-    broker_order = trading_client.submit_order(
-        order_data=order_request,
-    )
+    try:
+        broker_order = trading_client.submit_order(
+            order_data=order_request,
+        )
+    except Exception as error:
+        _raise_spread_exit_stage_failure(
+            stage="submit",
+            error=error,
+        )
 
     broker_order_id = getattr(broker_order, "id", None)
 

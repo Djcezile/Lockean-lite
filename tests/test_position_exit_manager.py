@@ -3,6 +3,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
 from alpaca.trading.enums import (
     OrderClass,
     OrderSide,
@@ -120,6 +122,13 @@ class FakeTradingClient:
     def replace_order_by_id(self, order_id, order_data):
         self.replacements.append((order_id, order_data))
         return SimpleNamespace(id="replacement-exit-001")
+
+
+def _alpaca_api_error(code="40310000"):
+    APIError = type("APIError", (Exception,), {})
+    error = APIError("broker request forbidden")
+    error.code = code
+    return error
 
 
 def test_identifies_existing_bull_call_as_one_managed_spread():
@@ -448,3 +457,177 @@ def test_active_pending_exit_does_not_globally_block_new_entries():
     assert not result.submitted
     assert not result.block_new_entries
     assert result.reason == "pending_exit_order_active"
+
+
+def test_history_read_failure_identifies_stage_and_preserves_api_code():
+    class HistoryFailureTradingClient(FakeTradingClient):
+        def get_orders(self, *, filter):
+            raise _alpaca_api_error()
+
+    trading_client = HistoryFailureTradingClient()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "^spread_exit_history_read_failed:"
+            "alpaca_api_error:40310000$"
+        ),
+    ):
+        run_paper_spread_exit_cycle(
+            trading_client=trading_client,
+            option_data_client=FakeOptionDataClient(
+                long_bid=Decimal("1.20"),
+                short_ask=Decimal("0.45"),
+            ),
+            snapshot=_snapshot(),
+        )
+
+    assert trading_client.orders == []
+    assert trading_client.cancelled == []
+    assert trading_client.replacements == []
+
+
+def test_quote_read_failure_identifies_stage_and_preserves_api_code():
+    class QuoteFailureOptionDataClient:
+        def get_option_latest_quote(self, request):
+            raise _alpaca_api_error()
+
+    trading_client = FakeTradingClient()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "^spread_exit_quote_read_failed:"
+            "alpaca_api_error:40310000$"
+        ),
+    ):
+        run_paper_spread_exit_cycle(
+            trading_client=trading_client,
+            option_data_client=QuoteFailureOptionDataClient(),
+            snapshot=_snapshot(),
+        )
+
+    assert trading_client.orders == []
+    assert trading_client.cancelled == []
+    assert trading_client.replacements == []
+
+
+def test_exit_submit_failure_identifies_stage_and_preserves_api_code():
+    class SubmitFailureTradingClient(FakeTradingClient):
+        def submit_order(self, *, order_data):
+            raise _alpaca_api_error()
+
+    trading_client = SubmitFailureTradingClient()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "^spread_exit_submit_failed:"
+            "alpaca_api_error:40310000$"
+        ),
+    ):
+        run_paper_spread_exit_cycle(
+            trading_client=trading_client,
+            option_data_client=FakeOptionDataClient(
+                long_bid=Decimal("1.20"),
+                short_ask=Decimal("0.45"),
+            ),
+            snapshot=_snapshot(),
+            take_profit_percent=Decimal("10"),
+        )
+
+    assert trading_client.orders == []
+    assert trading_client.cancelled == []
+    assert trading_client.replacements == []
+
+
+def test_exit_cancel_failure_identifies_stage_and_preserves_api_code():
+    now = datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
+    pending = PendingMlegOrderSnapshot(
+        order_id="stale-exit",
+        remaining_units=1,
+        purpose="exit",
+        submitted_at=now - timedelta(minutes=5),
+        symbols=(
+            "SPY260918C00782000",
+            "SPY260918C00785000",
+        ),
+    )
+
+    class CancelFailureTradingClient(FakeTradingClient):
+        def cancel_order_by_id(self, order_id):
+            raise _alpaca_api_error()
+
+    trading_client = CancelFailureTradingClient()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "^spread_exit_cancel_failed:"
+            "alpaca_api_error:40310000$"
+        ),
+    ):
+        run_paper_spread_exit_cycle(
+            trading_client=trading_client,
+            option_data_client=FakeOptionDataClient(
+                long_bid=Decimal("1.20"),
+                short_ask=Decimal("0.45"),
+            ),
+            snapshot=_snapshot(
+                pending=1,
+                pending_orders=(pending,),
+            ),
+            exit_order_timeout_seconds=240,
+            now_fn=lambda: now,
+        )
+
+    assert trading_client.orders == []
+    assert trading_client.cancelled == []
+    assert trading_client.replacements == []
+
+
+def test_exit_replace_failure_identifies_stage_and_preserves_api_code():
+    now = datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
+    pending = PendingMlegOrderSnapshot(
+        order_id="stale-take-profit",
+        remaining_units=1,
+        purpose="exit",
+        submitted_at=now - timedelta(minutes=5),
+        symbols=(
+            "SPY260918C00782000",
+            "SPY260918C00785000",
+        ),
+        limit_price=Decimal("-0.75"),
+    )
+
+    class ReplaceFailureTradingClient(FakeTradingClient):
+        def replace_order_by_id(self, order_id, order_data):
+            raise _alpaca_api_error()
+
+    trading_client = ReplaceFailureTradingClient()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "^spread_exit_replace_failed:"
+            "alpaca_api_error:40310000$"
+        ),
+    ):
+        run_paper_spread_exit_cycle(
+            trading_client=trading_client,
+            option_data_client=FakeOptionDataClient(
+                long_bid=Decimal("1.20"),
+                short_ask=Decimal("0.45"),
+            ),
+            snapshot=_snapshot(
+                pending=1,
+                pending_orders=(pending,),
+            ),
+            take_profit_percent=Decimal("20"),
+            exit_order_timeout_seconds=240,
+            now_fn=lambda: now,
+        )
+
+    assert trading_client.orders == []
+    assert trading_client.cancelled == []
+    assert trading_client.replacements == []

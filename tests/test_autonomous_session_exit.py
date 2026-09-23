@@ -159,3 +159,44 @@ def test_end_of_day_cutoff_cancels_pending_orders_and_blocks_new_entry():
     assert cycle_calls == []
     assert result.last_status == "EOD_ENTRY_BLOCKED"
     assert result.last_reason == "end_of_day_entry_cutoff"
+
+
+def test_stage_specific_exit_failure_is_reported_and_fails_closed():
+    cycle_calls = []
+    output = []
+
+    def fail_exit_check(snapshot):
+        raise ValueError(
+            "spread_exit_quote_read_failed:"
+            "alpaca_api_error:40310000"
+        )
+
+    result = run_autonomous_paper_session(
+        clock_provider=_open_clock,
+        portfolio_provider=_portfolio,
+        cycle_runner=lambda: cycle_calls.append("entry-cycle"),
+        exit_runner=fail_exit_check,
+        interval_seconds=1,
+        sleep_fn=lambda seconds: None,
+        output_fn=output.append,
+        max_iterations=1,
+    )
+
+    assert cycle_calls == []
+    assert result.last_status == "EXIT_ERROR"
+    assert result.last_reason == (
+        "spread_exit_quote_read_failed:"
+        "alpaca_api_error:40310000"
+    )
+    assert any(
+        message == (
+            "POSITION EXIT CHECK: ERROR | ValueError | "
+            "spread_exit_quote_read_failed:"
+            "alpaca_api_error:40310000"
+        )
+        for message in output
+    )
+    assert (
+        "FAIL CLOSED: no new entry while exit state is unavailable"
+        in output
+    )
