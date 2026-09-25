@@ -1,6 +1,8 @@
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
 from lockean_lite.autonomous_session import (
     run_autonomous_paper_session,
 )
@@ -83,6 +85,43 @@ def test_session_logs_machine_safe_value_error_reason():
     assert any(
         line
         == "AUTONOMOUS CYCLE: ERROR | ValueError | ai_model_request_failed"
+        for line in output
+    )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    (
+        "vix_completed_session_missing",
+        "vix_evidence_unavailable",
+        "spy_completed_session_missing",
+    ),
+)
+def test_session_reports_entry_evidence_delay_as_fail_closed_wait(reason):
+    output = []
+
+    def unavailable_evidence_cycle():
+        raise ValueError(reason)
+
+    summary = run_autonomous_paper_session(
+        clock_provider=_open_clock,
+        portfolio_provider=_portfolio,
+        cycle_runner=unavailable_evidence_cycle,
+        interval_seconds=1,
+        sleep_fn=lambda seconds: None,
+        output_fn=output.append,
+        max_iterations=1,
+    )
+
+    assert summary.last_status == "ENTRY_EVIDENCE_WAIT"
+    assert summary.last_reason == reason
+    assert f"AUTONOMOUS CYCLE: WAITING | {reason}" in output
+    assert (
+        "FAIL CLOSED: no new entry until required "
+        "completed-session evidence is available"
+    ) in output
+    assert not any(
+        line.startswith("AUTONOMOUS CYCLE: ERROR")
         for line in output
     )
 
