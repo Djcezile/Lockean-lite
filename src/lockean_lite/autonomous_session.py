@@ -41,6 +41,14 @@ DEFAULT_EXIT_ORDER_TIMEOUT_SECONDS = 240
 DEFAULT_ENTRY_ORDER_TIMEOUT_SECONDS = 240
 DEFAULT_EOD_ENTRY_CUTOFF_MINUTES = 5
 
+_ENTRY_EVIDENCE_WAIT_REASONS = frozenset(
+    {
+        "spy_completed_session_missing",
+        "vix_completed_session_missing",
+        "vix_evidence_unavailable",
+    }
+)
+
 
 @dataclass(frozen=True)
 class AutonomousSessionSummary:
@@ -549,15 +557,29 @@ def run_autonomous_paper_session(
                 try:
                     cycle_result = cycle_runner()
                 except Exception as error:
-                    last_status = "CYCLE_ERROR"
                     last_reason = safe_exception_reason(error)
-                    output_fn(
-                        "AUTONOMOUS CYCLE: ERROR | "
-                        f"{type(error).__name__} | {last_reason}"
-                    )
-                    output_fn(
-                        "FAIL CLOSED: reconcile Alpaca state on next iteration"
-                    )
+                    if (
+                        isinstance(error, ValueError)
+                        and last_reason in _ENTRY_EVIDENCE_WAIT_REASONS
+                    ):
+                        last_status = "ENTRY_EVIDENCE_WAIT"
+                        output_fn(
+                            "AUTONOMOUS CYCLE: WAITING | "
+                            f"{last_reason}"
+                        )
+                        output_fn(
+                            "FAIL CLOSED: no new entry until required "
+                            "completed-session evidence is available"
+                        )
+                    else:
+                        last_status = "CYCLE_ERROR"
+                        output_fn(
+                            "AUTONOMOUS CYCLE: ERROR | "
+                            f"{type(error).__name__} | {last_reason}"
+                        )
+                        output_fn(
+                            "FAIL CLOSED: reconcile Alpaca state on next iteration"
+                        )
                 else:
                     last_status = cycle_result.status
                     last_reason = cycle_result.reason
