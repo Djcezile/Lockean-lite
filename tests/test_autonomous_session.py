@@ -6,10 +6,32 @@ from lockean_lite.autonomous_session import (
 )
 from lockean_lite.paper_portfolio_snapshot import (
     PaperPortfolioSnapshot,
+    PendingMlegOrderSnapshot,
 )
 
 
-def _portfolio(*, managed_spreads=0, day_pl=Decimal("0")):
+def _portfolio(
+    *,
+    managed_spreads=0,
+    day_pl=Decimal("0"),
+    pending_orders=(),
+):
+    pending_entry_units = sum(
+        order.remaining_units
+        for order in pending_orders
+        if order.purpose == "entry"
+    )
+    pending_exit_units = sum(
+        order.remaining_units
+        for order in pending_orders
+        if order.purpose == "exit"
+    )
+    pending_unknown_units = sum(
+        order.remaining_units
+        for order in pending_orders
+        if order.purpose == "unknown"
+    )
+
     return PaperPortfolioSnapshot(
         status="ACTIVE",
         currency="USD",
@@ -27,6 +49,15 @@ def _portfolio(*, managed_spreads=0, day_pl=Decimal("0")):
         positions=(),
         option_contract_units=Decimal(managed_spreads * 2),
         managed_spreads=managed_spreads,
+        pending_spread_units=(
+            pending_entry_units
+            + pending_exit_units
+            + pending_unknown_units
+        ),
+        pending_entry_spread_units=pending_entry_units,
+        pending_exit_spread_units=pending_exit_units,
+        pending_unknown_spread_units=pending_unknown_units,
+        pending_mleg_orders=tuple(pending_orders),
     )
 
 
@@ -158,5 +189,125 @@ def test_session_reports_broker_order_id_when_execution_proof_exists():
 
     assert any(
         "ALPACA BROKER ORDER ID: broker-123" in line
+        for line in output
+    )
+
+
+def test_risk_management_only_keeps_exit_checks_active_without_ai_entries():
+    events = []
+    sleeps = []
+    output = []
+
+    def exit_runner(snapshot):
+        events.append("risk")
+        return SimpleNamespace(
+            submitted=False,
+            reason="no_managed_spread_exit_trigger",
+            broker_order_id=None,
+            expected_return_percent=None,
+            block_new_entries=False,
+            cancelled_order_ids=(),
+            diagnostics=(),
+        )
+
+    summary = run_autonomous_paper_session(
+        clock_provider=_open_clock,
+        portfolio_provider=lambda: _portfolio(managed_spreads=2),
+        cycle_runner=lambda: events.append("entry"),
+        exit_runner=exit_runner,
+        new_entries_enabled=False,
+        interval_seconds=300,
+        risk_check_interval_seconds=30,
+        sleep_fn=sleeps.append,
+        output_fn=output.append,
+        max_iterations=2,
+    )
+
+    assert events == ["risk", "risk"]
+    assert sleeps == [30]
+    assert summary.trade_cycles == 0
+    assert summary.last_status == "RISK_MANAGEMENT_ONLY"
+    assert summary.last_reason == "new_entries_disabled"
+    assert any(
+        line == "ENTRY AUTHORITY: DISABLED | risk_management_only"
+        for line in output
+    )
+
+
+def test_risk_management_only_still_submits_triggered_position_exit():
+    events = []
+    output = []
+
+    def exit_runner(snapshot):
+        events.append("risk")
+        return SimpleNamespace(
+            submitted=True,
+            reason="stop_loss_exit_submitted",
+            broker_order_id="risk-only-exit-1",
+            expected_return_percent=Decimal("-25.00"),
+            block_new_entries=False,
+            cancelled_order_ids=(),
+            diagnostics=(),
+        )
+
+    summary = run_autonomous_paper_session(
+        clock_provider=_open_clock,
+        portfolio_provider=lambda: _portfolio(managed_spreads=2),
+        cycle_runner=lambda: events.append("entry"),
+        exit_runner=exit_runner,
+        new_entries_enabled=False,
+        risk_check_interval_seconds=30,
+        sleep_fn=lambda seconds: None,
+        output_fn=output.append,
+        max_iterations=1,
+    )
+
+    assert events == ["risk"]
+    assert summary.trade_cycles == 0
+    assert summary.last_status == "EXIT_SUBMITTED"
+    assert summary.last_reason == "stop_loss_exit_submitted"
+    assert "ALPACA EXIT ORDER ID: risk-only-exit-1" in output
+
+
+def test_risk_management_only_cancels_pending_entry_before_risk_check():
+    pending_entry = PendingMlegOrderSnapshot(
+        order_id="pending-entry-1",
+        remaining_units=1,
+        purpose="entry",
+        submitted_at=None,
+        symbols=(
+            "SPY261002C00772000",
+            "SPY261002C00773000",
+        ),
+    )
+    events = []
+    output = []
+
+    summary = run_autonomous_paper_session(
+        clock_provider=_open_clock,
+        portfolio_provider=lambda: _portfolio(
+            managed_spreads=2,
+            pending_orders=(pending_entry,),
+        ),
+        cycle_runner=lambda: events.append("entry"),
+        exit_runner=lambda snapshot: events.append("risk"),
+        end_of_day_cancel_runner=lambda snapshot: (
+            events.append("cleanup")
+            or ("pending-entry-1",)
+        ),
+        new_entries_enabled=False,
+        interval_seconds=300,
+        risk_check_interval_seconds=30,
+        sleep_fn=lambda seconds: None,
+        output_fn=output.append,
+        max_iterations=1,
+    )
+
+    assert events == ["cleanup"]
+    assert summary.trade_cycles == 0
+    assert summary.last_status == "ENTRY_ORDER_CANCELLED"
+    assert summary.last_reason == "risk_management_only_entry_cancelled"
+    assert any(
+        "RISK-ONLY ENTRY CLEANUP: CANCELLED | pending-entry-1" in line
         for line in output
     )
