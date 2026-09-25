@@ -211,6 +211,7 @@ def run_autonomous_paper_session(
     maximum_open_spreads: int = DEFAULT_MAXIMUM_OPEN_SPREADS,
     maximum_daily_loss: Decimal = DEFAULT_MAXIMUM_DAILY_LOSS,
     end_of_day_entry_cutoff_minutes: int = DEFAULT_EOD_ENTRY_CUTOFF_MINUTES,
+    new_entries_enabled: bool = True,
     now_fn=None,
     sleep_fn=time.sleep,
     output_fn=print,
@@ -255,6 +256,14 @@ def run_autonomous_paper_session(
     output_fn(
         "END-OF-DAY ENTRY CUTOFF: "
         f"{end_of_day_entry_cutoff_minutes} minutes"
+    )
+    output_fn(
+        "NEW ENTRY AUTHORITY: "
+        + (
+            "ENABLED"
+            if new_entries_enabled
+            else "DISABLED (RISK MANAGEMENT ONLY)"
+        )
     )
 
     next_check_message = _next_check_message(
@@ -336,6 +345,82 @@ def run_autonomous_paper_session(
             seconds_to_close is not None
             and seconds_to_close <= cutoff_seconds
         )
+
+        # Risk-management-only operation must not leave an already-working
+        # entry order capable of adding exposure. Cancel it first, then wait
+        # for a fresh broker snapshot before acting on existing positions.
+        if not new_entries_enabled:
+            pending_entry_units = int(
+                getattr(
+                    snapshot,
+                    "pending_entry_spread_units",
+                    0,
+                )
+            )
+
+            if pending_entry_units > 0:
+                if end_of_day_cancel_runner is None:
+                    last_status = "ENTRY_ORDER_ERROR"
+                    last_reason = (
+                        "risk_management_only_entry_cleanup_unavailable"
+                    )
+                    output_fn(
+                        "RISK-ONLY ENTRY CLEANUP: ERROR | "
+                        f"{last_reason}"
+                    )
+                    output_fn(
+                        "FAIL CLOSED: no AI entry or stale-snapshot "
+                        "position action"
+                    )
+                else:
+                    try:
+                        cancelled_ids = end_of_day_cancel_runner(
+                            snapshot
+                        )
+                    except Exception as error:
+                        last_status = "ENTRY_ORDER_ERROR"
+                        last_reason = safe_exception_reason(error)
+                        output_fn(
+                            "RISK-ONLY ENTRY CLEANUP: ERROR | "
+                            f"{type(error).__name__} | {last_reason}"
+                        )
+                        output_fn(
+                            "FAIL CLOSED: no AI entry or stale-snapshot "
+                            "position action"
+                        )
+                    else:
+                        if cancelled_ids:
+                            last_status = "ENTRY_ORDER_CANCELLED"
+                            last_reason = (
+                                "risk_management_only_entry_cancelled"
+                            )
+                            output_fn(
+                                "RISK-ONLY ENTRY CLEANUP: CANCELLED | "
+                                + ",".join(cancelled_ids)
+                            )
+                        else:
+                            last_status = "ENTRY_ORDER_RECONCILIATION"
+                            last_reason = (
+                                "risk_management_only_pending_entry_"
+                                "reconciliation"
+                            )
+                            output_fn(
+                                "RISK-ONLY ENTRY CLEANUP: WAITING | "
+                                f"{last_reason}"
+                            )
+
+                if max_iterations is not None and iterations >= max_iterations:
+                    return _summary(
+                        iterations=iterations,
+                        trade_cycles=trade_cycles,
+                        last_status=last_status,
+                        last_reason=last_reason,
+                    )
+
+                output_fn(next_check_message)
+                sleep_fn(risk_check_interval_seconds)
+                elapsed_seconds += risk_check_interval_seconds
+                continue
 
         # Risk and reconciliation are intentionally evaluated on every loop,
         # including the final entry-cutoff window. EOD policy may stop new
@@ -456,6 +541,26 @@ def run_autonomous_paper_session(
             )
             if cleanup_error_reason is not None:
                 last_reason = cleanup_error_reason
+
+            if max_iterations is not None and iterations >= max_iterations:
+                return _summary(
+                    iterations=iterations,
+                    trade_cycles=trade_cycles,
+                    last_status=last_status,
+                    last_reason=last_reason,
+                )
+
+            output_fn(next_check_message)
+            sleep_fn(risk_check_interval_seconds)
+            elapsed_seconds += risk_check_interval_seconds
+            continue
+
+        if not new_entries_enabled:
+            last_status = "RISK_MANAGEMENT_ONLY"
+            last_reason = "new_entries_disabled"
+            output_fn(
+                "ENTRY AUTHORITY: DISABLED | risk_management_only"
+            )
 
             if max_iterations is not None and iterations >= max_iterations:
                 return _summary(
@@ -759,6 +864,15 @@ def main(argv=None) -> int:
             "minutes before market close while position risk checks continue."
         ),
     )
+    parser.add_argument(
+        "--risk-management-only",
+        action="store_true",
+        help=(
+            "Manage and exit existing paper positions while disabling all "
+            "new AI entry authority. Pending entry orders are cancelled "
+            "before position actions continue."
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -826,7 +940,9 @@ def main(argv=None) -> int:
         f"ACTIVITY_MODE={args.activity_mode} | "
         f"AI_CADENCE={args.interval_seconds}s | "
         f"RISK_CADENCE={args.risk_check_interval_seconds}s | "
-        f"ENTRY_COOLDOWN={args.entry_cooldown_seconds}s"
+        f"ENTRY_COOLDOWN={args.entry_cooldown_seconds}s | "
+        "NEW_ENTRIES="
+        f"{'DISABLED' if args.risk_management_only else 'ENABLED'}"
     )
 
     run_autonomous_paper_session(
@@ -842,6 +958,7 @@ def main(argv=None) -> int:
         maximum_open_spreads=args.maximum_open_spreads,
         maximum_daily_loss=args.maximum_daily_loss,
         end_of_day_entry_cutoff_minutes=args.eod_entry_cutoff_minutes,
+        new_entries_enabled=not args.risk_management_only,
     )
 
     return 0
