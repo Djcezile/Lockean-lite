@@ -32,6 +32,15 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
     fake_authority = object()
     fake_gateway = object()
     fake_quotes = ("trusted-quotes",)
+    fake_loss_loop_state = object()
+    fake_base_policy_decision = SimpleNamespace(
+        allowed=True,
+        reason="entry_portfolio_policy_passed",
+    )
+    fake_loss_loop_decision = SimpleNamespace(
+        allowed=False,
+        reason="same_direction_stop_loss_cooldown_active",
+    )
     expected_result = object()
 
     monkeypatch.setenv(
@@ -133,6 +142,30 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         fake_api_account_provider,
     )
 
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.read_live_paper_portfolio_snapshot",
+        lambda *, trading_client: "portfolio-snapshot",
+    )
+
+    def fake_entry_policy(**kwargs):
+        captured["entry_policy_snapshot"] = kwargs["snapshot"]
+        return fake_base_policy_decision
+
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.evaluate_entry_proposal_policy",
+        fake_entry_policy,
+    )
+
+    def fake_loss_loop_policy(*, proposal, state):
+        captured["loss_loop_proposal"] = proposal
+        captured["loss_loop_state"] = state
+        return fake_loss_loop_decision
+
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.evaluate_session_loss_loop_proposal",
+        fake_loss_loop_policy,
+    )
+
     def fake_authority_constructor(
         *,
         maximum_allowed_loss,
@@ -189,6 +222,9 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         captured["cycle_gateway"] = (
             kwargs["execution_gateway"]
         )
+        captured["combined_policy_result"] = kwargs[
+            "proposal_policy_checker"
+        ]("candidate-proposal", fake_quotes)
 
         return expected_result
 
@@ -214,6 +250,7 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         proposal_id_provider=lambda: (
             "production-001"
         ),
+        loss_loop_state=fake_loss_loop_state,
     )
 
     assert result is expected_result
@@ -273,6 +310,11 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
     assert captured[
         "cycle_gateway"
     ] is fake_gateway
+
+    assert captured["entry_policy_snapshot"] == "portfolio-snapshot"
+    assert captured["loss_loop_proposal"] == "candidate-proposal"
+    assert captured["loss_loop_state"] is fake_loss_loop_state
+    assert captured["combined_policy_result"] is fake_loss_loop_decision
 
 
 def test_production_runtime_rejects_missing_authority_signing_key():

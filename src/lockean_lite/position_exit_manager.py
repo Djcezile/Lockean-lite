@@ -17,6 +17,9 @@ from lockean_lite.paper_portfolio_snapshot import (
     PaperPositionSnapshot,
 )
 from lockean_lite.safe_error_reporting import safe_exception_reason
+from lockean_lite.session_loss_loop_policy import (
+    build_managed_exit_client_order_id,
+)
 
 
 _OCC_OPTION_PATTERN = re.compile(
@@ -1314,6 +1317,10 @@ def run_paper_spread_exit_cycle(
         short_symbol=spread.short_symbol,
         contracts=spread.contracts,
         limit_credit=submitted_limit_credit,
+        client_order_id=build_managed_exit_client_order_id(
+            reason=reason,
+            option_type=spread.option_type,
+        ),
     )
 
     try:

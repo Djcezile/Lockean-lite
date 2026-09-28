@@ -53,6 +53,9 @@ from lockean_lite.paper_portfolio_snapshot import (
 from lockean_lite.safe_error_reporting import (
     safe_exception_reason,
 )
+from lockean_lite.session_loss_loop_policy import (
+    evaluate_session_loss_loop_proposal,
+)
 from lockean_lite.vix_history_source import (
     ResilientVixHistorySource,
     fetch_official_vix_history,
@@ -103,6 +106,7 @@ def run_live_production_autonomous_cycle(
     agent_activity_mode: str = "balanced",
     maximum_same_structure_units: int = DEFAULT_MAXIMUM_SAME_STRUCTURE_UNITS,
     vix_history_source=None,
+    loss_loop_state=None,
 ):
     if not authorization_signing_key:
         raise ValueError(
@@ -177,6 +181,7 @@ def run_live_production_autonomous_cycle(
         maximum_same_structure_units=(
             maximum_same_structure_units
         ),
+        loss_loop_state=loss_loop_state,
     )
 
     if isinstance(result, AutonomousTradeCycleResult):
@@ -210,6 +215,7 @@ def run_production_autonomous_cycle(
     agent_activity_mode: str = "balanced",
     maximum_same_structure_units: int = DEFAULT_MAXIMUM_SAME_STRUCTURE_UNITS,
     intraday_context: dict[str, str] | None = None,
+    loss_loop_state=None,
 ):
     if not authorization_signing_key:
         raise ValueError(
@@ -299,13 +305,19 @@ def run_production_autonomous_cycle(
         portfolio_snapshot = read_live_paper_portfolio_snapshot(
             trading_client=trading_client,
         )
-        return evaluate_entry_proposal_policy(
+        portfolio_decision = evaluate_entry_proposal_policy(
             proposal=proposal,
             candidate_quotes=candidate_quotes,
             snapshot=portfolio_snapshot,
             maximum_same_structure_units=(
                 maximum_same_structure_units
             ),
+        )
+        if not portfolio_decision.allowed or loss_loop_state is None:
+            return portfolio_decision
+        return evaluate_session_loss_loop_proposal(
+            proposal=proposal,
+            state=loss_loop_state,
         )
 
     authority = LockeanAuthority(
