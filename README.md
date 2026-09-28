@@ -81,12 +81,20 @@ Lockean Lite now runs continuously from one command against the linked Alpaca pa
 
 ```powershell
 python -m lockean_lite.autonomous_session `
-  --completed-through 2026-09-03 `
-  --expiration 2026-09-18 `
+  --completed-through 2026-09-28 `
+  --expiration 2026-10-02 `
   --interval-seconds 300 `
-  --maximum-open-spreads 5 `
+  --risk-check-interval-seconds 30 `
+  --entry-cooldown-seconds 600 `
+  --maximum-open-spreads 2 `
+  --maximum-same-structure-units 1 `
   --maximum-allowed-loss 150 `
-  --maximum-daily-loss 750
+  --maximum-daily-loss 300 `
+  --take-profit-percent 20 `
+  --stop-loss-percent 20 `
+  --loss-loop-direction-cooldown-seconds 3600 `
+  --maximum-session-stop-loss-fills 2 `
+  --activity-mode active_paper
 ```
 
 Current session controls:
@@ -97,6 +105,11 @@ Current session controls:
 - each new autonomous recommendation is constrained to **1 spread unit**
 - **$150** maximum allowed loss per proposal
 - **$750** daily-loss halt for new entries
+- first confirmed stop-loss fill blocks that direction for **60 minutes**
+- second confirmed stop-loss spread-unit fill disables all new entries for the
+  rest of the market session
+- stop-loss state is rebuilt from tagged closed Alpaca orders after a restart;
+  submissions, stale cancellations, and take-profit fills do not count
 - Alpaca market-clock awareness
 - temporary Alpaca / AI / market-data failures fail closed for that iteration and reconcile next cycle
 - session continues monitoring even when new entries are blocked

@@ -23,6 +23,9 @@ from lockean_lite.portfolio_gate import evaluate_portfolio_entry
 from lockean_lite.position_exit_manager import run_paper_spread_exit_cycle
 from lockean_lite.production_runtime import run_live_production_autonomous_cycle
 from lockean_lite.safe_error_reporting import safe_exception_reason
+from lockean_lite.session_loss_loop_policy import (
+    read_session_loss_loop_state,
+)
 
 
 DEFAULT_INTERVAL_SECONDS = 300
@@ -40,6 +43,8 @@ DEFAULT_MAXIMUM_SAME_STRUCTURE_UNITS = 2
 DEFAULT_EXIT_ORDER_TIMEOUT_SECONDS = 240
 DEFAULT_ENTRY_ORDER_TIMEOUT_SECONDS = 240
 DEFAULT_EOD_ENTRY_CUTOFF_MINUTES = 5
+DEFAULT_LOSS_LOOP_DIRECTION_COOLDOWN_SECONDS = 3600
+DEFAULT_MAXIMUM_SESSION_STOP_LOSS_FILLS = 2
 
 _ENTRY_EVIDENCE_WAIT_REASONS = frozenset(
     {
@@ -205,6 +210,7 @@ def run_autonomous_paper_session(
     exit_runner=None,
     entry_order_maintenance_runner=None,
     end_of_day_cancel_runner=None,
+    loss_loop_state_provider=None,
     interval_seconds: int = DEFAULT_INTERVAL_SECONDS,
     risk_check_interval_seconds: int | None = None,
     entry_cooldown_seconds: int = 0,
@@ -345,6 +351,95 @@ def run_autonomous_paper_session(
             seconds_to_close is not None
             and seconds_to_close <= cutoff_seconds
         )
+
+        loss_loop_state = None
+        loss_loop_error_reason = None
+        if new_entries_enabled and loss_loop_state_provider is not None:
+            try:
+                loss_loop_state = loss_loop_state_provider(current_time)
+            except Exception as error:
+                loss_loop_error_reason = safe_exception_reason(error)
+                output_fn(
+                    "LOSS-LOOP STATE: UNAVAILABLE | "
+                    f"{type(error).__name__} | {loss_loop_error_reason}"
+                )
+            else:
+                output_fn(
+                    "LOSS-LOOP STATE: "
+                    f"fills={loss_loop_state.confirmed_stop_loss_fills} | "
+                    "blocked_direction="
+                    f"{loss_loop_state.blocked_direction or 'none'} | "
+                    f"halt_all_entries={loss_loop_state.halt_all_entries} | "
+                    f"reason={loss_loop_state.reason}"
+                )
+
+        loss_loop_blocks_existing_entry = (
+            loss_loop_error_reason is not None
+            or (
+                loss_loop_state is not None
+                and (
+                    loss_loop_state.halt_all_entries
+                    or loss_loop_state.blocked_direction is not None
+                )
+            )
+        )
+        pending_entry_units = int(
+            getattr(snapshot, "pending_entry_spread_units", 0)
+        )
+
+        # A working entry predating a newly observed stop fill could add
+        # exposure despite the new policy state. Cancel it and require a fresh
+        # broker snapshot before any position or proposal action.
+        if loss_loop_blocks_existing_entry and pending_entry_units > 0:
+            if end_of_day_cancel_runner is None:
+                last_status = "ENTRY_ORDER_ERROR"
+                last_reason = "loss_loop_entry_cleanup_unavailable"
+                output_fn(
+                    "LOSS-LOOP ENTRY CLEANUP: ERROR | "
+                    f"{last_reason}"
+                )
+            else:
+                try:
+                    cancelled_ids = end_of_day_cancel_runner(snapshot)
+                except Exception as error:
+                    last_status = "ENTRY_ORDER_ERROR"
+                    last_reason = safe_exception_reason(error)
+                    output_fn(
+                        "LOSS-LOOP ENTRY CLEANUP: ERROR | "
+                        f"{type(error).__name__} | {last_reason}"
+                    )
+                else:
+                    if cancelled_ids:
+                        last_status = "ENTRY_ORDER_CANCELLED"
+                        last_reason = "loss_loop_pending_entry_cancelled"
+                        output_fn(
+                            "LOSS-LOOP ENTRY CLEANUP: CANCELLED | "
+                            + ",".join(cancelled_ids)
+                        )
+                    else:
+                        last_status = "ENTRY_ORDER_RECONCILIATION"
+                        last_reason = (
+                            "loss_loop_pending_entry_reconciliation"
+                        )
+                        output_fn(
+                            "LOSS-LOOP ENTRY CLEANUP: WAITING | "
+                            f"{last_reason}"
+                        )
+
+            output_fn(
+                "FAIL CLOSED: no AI entry or stale-snapshot position action"
+            )
+            if max_iterations is not None and iterations >= max_iterations:
+                return _summary(
+                    iterations=iterations,
+                    trade_cycles=trade_cycles,
+                    last_status=last_status,
+                    last_reason=last_reason,
+                )
+            output_fn(next_check_message)
+            sleep_fn(risk_check_interval_seconds)
+            elapsed_seconds += risk_check_interval_seconds
+            continue
 
         # Risk-management-only operation must not leave an already-working
         # entry order capable of adding exposure. Cancel it first, then wait
@@ -555,6 +650,43 @@ def run_autonomous_paper_session(
             elapsed_seconds += risk_check_interval_seconds
             continue
 
+        if loss_loop_error_reason is not None:
+            last_status = "LOSS_LOOP_STATE_UNAVAILABLE"
+            last_reason = loss_loop_error_reason
+            output_fn(
+                "FAIL CLOSED: no new entry while loss-loop state is unavailable"
+            )
+            if max_iterations is not None and iterations >= max_iterations:
+                return _summary(
+                    iterations=iterations,
+                    trade_cycles=trade_cycles,
+                    last_status=last_status,
+                    last_reason=last_reason,
+                )
+            output_fn(next_check_message)
+            sleep_fn(risk_check_interval_seconds)
+            elapsed_seconds += risk_check_interval_seconds
+            continue
+
+        if loss_loop_state is not None and loss_loop_state.halt_all_entries:
+            last_status = "LOSS_LOOP_ENTRY_BLOCKED"
+            last_reason = loss_loop_state.reason
+            output_fn(
+                "LOSS-LOOP ENTRY GATE: BLOCKED | "
+                f"{loss_loop_state.reason}"
+            )
+            if max_iterations is not None and iterations >= max_iterations:
+                return _summary(
+                    iterations=iterations,
+                    trade_cycles=trade_cycles,
+                    last_status=last_status,
+                    last_reason=last_reason,
+                )
+            output_fn(next_check_message)
+            sleep_fn(risk_check_interval_seconds)
+            elapsed_seconds += risk_check_interval_seconds
+            continue
+
         if not new_entries_enabled:
             last_status = "RISK_MANAGEMENT_ONLY"
             last_reason = "new_entries_disabled"
@@ -660,7 +792,12 @@ def run_autonomous_paper_session(
                 trade_cycles += 1
                 next_entry_check_at = elapsed_seconds + interval_seconds
                 try:
-                    cycle_result = cycle_runner()
+                    if loss_loop_state_provider is None:
+                        cycle_result = cycle_runner()
+                    else:
+                        cycle_result = cycle_runner(
+                            loss_loop_state=loss_loop_state
+                        )
                 except Exception as error:
                     last_reason = safe_exception_reason(error)
                     if (
@@ -873,8 +1010,35 @@ def main(argv=None) -> int:
             "before position actions continue."
         ),
     )
+    parser.add_argument(
+        "--loss-loop-direction-cooldown-seconds",
+        type=int,
+        default=DEFAULT_LOSS_LOOP_DIRECTION_COOLDOWN_SECONDS,
+        help=(
+            "Block proposals in the stopped direction for this many seconds "
+            "after the first confirmed stop-loss fill."
+        ),
+    )
+    parser.add_argument(
+        "--maximum-session-stop-loss-fills",
+        type=int,
+        default=DEFAULT_MAXIMUM_SESSION_STOP_LOSS_FILLS,
+        help=(
+            "Disable all new entries after this many confirmed stop-loss "
+            "spread units fill in the current market session."
+        ),
+    )
 
     args = parser.parse_args(argv)
+
+    if args.loss_loop_direction_cooldown_seconds < 0:
+        raise ValueError(
+            "loss_loop_direction_cooldown_seconds_must_be_non_negative"
+        )
+    if args.maximum_session_stop_loss_fills <= 0:
+        raise ValueError(
+            "maximum_session_stop_loss_fills_must_be_positive"
+        )
 
     signing_key_text = os.getenv("LOCKEAN_AUTHORIZATION_SIGNING_KEY")
     if not signing_key_text:
@@ -921,7 +1085,19 @@ def main(argv=None) -> int:
             snapshot=snapshot,
         )
 
-    def cycle_runner():
+    def loss_loop_state_provider(now):
+        return read_session_loss_loop_state(
+            trading_client=trading_client,
+            now=now,
+            direction_cooldown_seconds=(
+                args.loss_loop_direction_cooldown_seconds
+            ),
+            maximum_stop_loss_fills=(
+                args.maximum_session_stop_loss_fills
+            ),
+        )
+
+    def cycle_runner(*, loss_loop_state):
         return run_live_production_autonomous_cycle(
             completed_through=args.completed_through,
             expiration=args.expiration,
@@ -929,6 +1105,10 @@ def main(argv=None) -> int:
             authorization_signing_key=signing_key,
             agent_activity_mode=args.activity_mode,
             maximum_same_structure_units=args.maximum_same_structure_units,
+            loss_loop_state=loss_loop_state,
+            loss_loop_state_provider=lambda: loss_loop_state_provider(
+                datetime.now(timezone.utc)
+            ),
         )
 
     print(
@@ -941,6 +1121,10 @@ def main(argv=None) -> int:
         f"AI_CADENCE={args.interval_seconds}s | "
         f"RISK_CADENCE={args.risk_check_interval_seconds}s | "
         f"ENTRY_COOLDOWN={args.entry_cooldown_seconds}s | "
+        "LOSS_LOOP_DIRECTION_COOLDOWN="
+        f"{args.loss_loop_direction_cooldown_seconds}s | "
+        "SESSION_STOP_FILL_LIMIT="
+        f"{args.maximum_session_stop_loss_fills} | "
         "NEW_ENTRIES="
         f"{'DISABLED' if args.risk_management_only else 'ENABLED'}"
     )
@@ -952,6 +1136,7 @@ def main(argv=None) -> int:
         exit_runner=exit_runner,
         entry_order_maintenance_runner=entry_order_maintenance_runner,
         end_of_day_cancel_runner=end_of_day_cancel_runner,
+        loss_loop_state_provider=loss_loop_state_provider,
         interval_seconds=args.interval_seconds,
         risk_check_interval_seconds=args.risk_check_interval_seconds,
         entry_cooldown_seconds=args.entry_cooldown_seconds,

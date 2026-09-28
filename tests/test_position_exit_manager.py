@@ -170,6 +170,7 @@ def test_take_profit_submits_single_mleg_close_for_existing_spread():
     assert order.order_class == OrderClass.MLEG
     assert order.qty == 1
     assert order.limit_price == -0.73
+    assert order.client_order_id.startswith("lockean-tp-call-")
 
     long_leg, short_leg = order.legs
     assert long_leg.side == OrderSide.SELL
@@ -179,8 +180,10 @@ def test_take_profit_submits_single_mleg_close_for_existing_spread():
 
 
 def test_stop_loss_submits_risk_reducing_close_before_new_entry():
+    trading_client = FakeTradingClient()
+
     result = run_paper_spread_exit_cycle(
-        trading_client=FakeTradingClient(),
+        trading_client=trading_client,
         option_data_client=FakeOptionDataClient(
             long_bid=Decimal("0.40"),
             short_ask=Decimal("0.10"),
@@ -194,6 +197,9 @@ def test_stop_loss_submits_risk_reducing_close_before_new_entry():
     assert result.reason == "stop_loss_exit_submitted"
     assert result.expected_return_percent == Decimal("-50.00")
     assert result.submitted_limit_credit == Decimal("0.30")
+    assert trading_client.orders[0].client_order_id.startswith(
+        "lockean-sl-call-"
+    )
 
 
 def test_no_exit_when_executable_return_is_inside_thresholds():

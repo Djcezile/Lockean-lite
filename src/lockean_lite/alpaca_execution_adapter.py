@@ -146,6 +146,7 @@ def build_managed_spread_close_order(
     short_symbol: str,
     contracts: int,
     limit_credit: Decimal,
+    client_order_id: str | None = None,
 ) -> LimitOrderRequest:
     if contracts <= 0:
         raise ValueError(
@@ -164,6 +165,7 @@ def build_managed_spread_close_order(
         limit_price=float(-limit_credit),
         time_in_force=TimeInForce.DAY,
         order_class=OrderClass.MLEG,
+        client_order_id=client_order_id,
         legs=[
             OptionLegRequest(
                 symbol=long_symbol,
