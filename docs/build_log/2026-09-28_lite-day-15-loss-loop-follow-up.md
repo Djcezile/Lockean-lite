@@ -28,7 +28,9 @@ Managed exit orders now carry a non-secret Lockean client-order tag identifying
 stop-loss versus take-profit and call versus put direction. The session reads
 the current New York market day's closed Alpaca orders on every risk cycle and
 reconstructs the policy state. A process restart therefore does not erase a
-cooldown or session halt.
+cooldown or session halt. The proposal gate reads that broker history again
+immediately before deterministic proposal evaluation so a stop that fills
+after the session-loop check cannot pass on stale policy state.
 
 The directional restriction is enforced deterministically against the
 structured proposal before Lockean Authority evaluates it. It is not a prompt

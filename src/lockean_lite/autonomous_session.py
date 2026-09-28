@@ -1106,6 +1106,9 @@ def main(argv=None) -> int:
             agent_activity_mode=args.activity_mode,
             maximum_same_structure_units=args.maximum_same_structure_units,
             loss_loop_state=loss_loop_state,
+            loss_loop_state_provider=lambda: loss_loop_state_provider(
+                datetime.now(timezone.utc)
+            ),
         )
 
     print(

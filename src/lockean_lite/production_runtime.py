@@ -107,6 +107,7 @@ def run_live_production_autonomous_cycle(
     maximum_same_structure_units: int = DEFAULT_MAXIMUM_SAME_STRUCTURE_UNITS,
     vix_history_source=None,
     loss_loop_state=None,
+    loss_loop_state_provider=None,
 ):
     if not authorization_signing_key:
         raise ValueError(
@@ -182,6 +183,7 @@ def run_live_production_autonomous_cycle(
             maximum_same_structure_units
         ),
         loss_loop_state=loss_loop_state,
+        loss_loop_state_provider=loss_loop_state_provider,
     )
 
     if isinstance(result, AutonomousTradeCycleResult):
@@ -216,6 +218,7 @@ def run_production_autonomous_cycle(
     maximum_same_structure_units: int = DEFAULT_MAXIMUM_SAME_STRUCTURE_UNITS,
     intraday_context: dict[str, str] | None = None,
     loss_loop_state=None,
+    loss_loop_state_provider=None,
 ):
     if not authorization_signing_key:
         raise ValueError(
@@ -313,11 +316,18 @@ def run_production_autonomous_cycle(
                 maximum_same_structure_units
             ),
         )
-        if not portfolio_decision.allowed or loss_loop_state is None:
+        if not portfolio_decision.allowed:
+            return portfolio_decision
+        refreshed_loss_loop_state = (
+            loss_loop_state_provider()
+            if loss_loop_state_provider is not None
+            else loss_loop_state
+        )
+        if refreshed_loss_loop_state is None:
             return portfolio_decision
         return evaluate_session_loss_loop_proposal(
             proposal=proposal,
-            state=loss_loop_state,
+            state=refreshed_loss_loop_state,
         )
 
     authority = LockeanAuthority(

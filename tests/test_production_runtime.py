@@ -33,6 +33,7 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
     fake_gateway = object()
     fake_quotes = ("trusted-quotes",)
     fake_loss_loop_state = object()
+    fake_refreshed_loss_loop_state = object()
     fake_base_policy_decision = SimpleNamespace(
         allowed=True,
         reason="entry_portfolio_policy_passed",
@@ -251,6 +252,7 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
             "production-001"
         ),
         loss_loop_state=fake_loss_loop_state,
+        loss_loop_state_provider=lambda: fake_refreshed_loss_loop_state,
     )
 
     assert result is expected_result
@@ -313,7 +315,7 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
 
     assert captured["entry_policy_snapshot"] == "portfolio-snapshot"
     assert captured["loss_loop_proposal"] == "candidate-proposal"
-    assert captured["loss_loop_state"] is fake_loss_loop_state
+    assert captured["loss_loop_state"] is fake_refreshed_loss_loop_state
     assert captured["combined_policy_result"] is fake_loss_loop_decision
 
 
