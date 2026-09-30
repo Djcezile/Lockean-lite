@@ -367,6 +367,8 @@ def run_autonomous_paper_session(
                 output_fn(
                     "LOSS-LOOP STATE: "
                     f"fills={loss_loop_state.confirmed_stop_loss_fills} | "
+                    "remaining_stop_capacity="
+                    f"{loss_loop_state.remaining_stop_loss_capacity} | "
                     "blocked_direction="
                     f"{loss_loop_state.blocked_direction or 'none'} | "
                     f"halt_all_entries={loss_loop_state.halt_all_entries} | "
@@ -778,6 +780,11 @@ def run_autonomous_paper_session(
                 snapshot=snapshot,
                 maximum_open_spreads=maximum_open_spreads,
                 maximum_daily_loss=maximum_daily_loss,
+                remaining_session_stop_loss_capacity=(
+                    loss_loop_state.remaining_stop_loss_capacity
+                    if loss_loop_state is not None
+                    else None
+                ),
             )
 
             if not entry_decision.allowed:
@@ -1125,6 +1132,7 @@ def main(argv=None) -> int:
         f"{args.loss_loop_direction_cooldown_seconds}s | "
         "SESSION_STOP_FILL_LIMIT="
         f"{args.maximum_session_stop_loss_fills} | "
+        "STOP_CAPACITY_MODE=remaining_exposure | "
         "NEW_ENTRIES="
         f"{'DISABLED' if args.risk_management_only else 'ENABLED'}"
     )
