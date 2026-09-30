@@ -102,10 +102,13 @@ Current session controls:
 - **$150** maximum allowed loss per proposal
 - **$300** daily-loss halt for new entries
 - first confirmed stop-loss fill blocks that direction for **60 minutes**
+- each confirmed stop also reduces the maximum committed spread capacity by
+  one; with a two-stop limit, one stopped spread permits at most one remaining
+  committed spread
 - second confirmed stop-loss spread-unit fill disables all new entries for the
   rest of the market session
-- positions already open when the second stop is confirmed continue through
-  normal take-profit and stop-loss management; they are not forcibly liquidated
+- the remaining-capacity gate prevents already-authorized concurrent exposure
+  from producing more stopped spread units than the configured session limit
 - stop-loss state is rebuilt from tagged closed Alpaca orders after a restart;
   submissions, stale cancellations, and take-profit fills do not count
 - Alpaca market-clock awareness
@@ -249,7 +252,7 @@ python -m pytest -q
 Current verified engineering seal:
 
 ```text
-341 passed
+345 passed
 0 regressions
 ```
 

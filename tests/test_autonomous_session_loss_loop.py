@@ -10,7 +10,7 @@ from lockean_lite.session_loss_loop_policy import SessionLossLoopState
 NOW = datetime(2026, 9, 29, 15, 0, tzinfo=timezone.utc)
 
 
-def _portfolio(*, pending_entry_units=0):
+def _portfolio(*, managed_spreads=0, pending_entry_units=0):
     return PaperPortfolioSnapshot(
         status="ACTIVE",
         currency="USD",
@@ -26,8 +26,8 @@ def _portfolio(*, pending_entry_units=0):
         day_pl=Decimal("0"),
         unrealized_pl=Decimal("0"),
         positions=(),
-        option_contract_units=Decimal("0"),
-        managed_spreads=0,
+        option_contract_units=Decimal(managed_spreads * 2),
+        managed_spreads=managed_spreads,
         pending_entry_spread_units=pending_entry_units,
     )
 
@@ -60,9 +60,19 @@ def _cycle_result():
     )
 
 
-def _state(*, fills, direction=None, halt=False, reason):
+def _state(
+    *,
+    fills,
+    remaining_capacity=None,
+    direction=None,
+    halt=False,
+    reason,
+):
+    if remaining_capacity is None:
+        remaining_capacity = max(0, 2 - fills)
     return SessionLossLoopState(
         confirmed_stop_loss_fills=fills,
+        remaining_stop_loss_capacity=remaining_capacity,
         blocked_direction=direction,
         cooldown_until=None,
         halt_all_entries=halt,
@@ -129,6 +139,38 @@ def test_second_stop_fill_halts_entries_but_risk_checks_continue():
     assert summary.last_status == "LOSS_LOOP_ENTRY_BLOCKED"
     assert summary.last_reason == "session_stop_loss_limit_reached"
     assert any("LOSS-LOOP ENTRY GATE: BLOCKED" in line for line in outputs)
+
+
+def test_first_stop_blocks_second_committed_spread_after_cooldown_expires():
+    cycle_calls = []
+    outputs = []
+
+    summary = run_autonomous_paper_session(
+        clock_provider=_clock,
+        portfolio_provider=lambda: _portfolio(managed_spreads=1),
+        cycle_runner=lambda **kwargs: cycle_calls.append(kwargs),
+        exit_runner=lambda snapshot: _exit_result(),
+        loss_loop_state_provider=lambda now: _state(
+            fills=1,
+            remaining_capacity=1,
+            reason="loss_loop_entry_allowed",
+        ),
+        maximum_open_spreads=2,
+        now_fn=lambda: NOW,
+        sleep_fn=lambda seconds: None,
+        output_fn=outputs.append,
+        max_iterations=1,
+    )
+
+    assert cycle_calls == []
+    assert summary.last_status == "ENTRY_BLOCKED"
+    assert summary.last_reason == "session_stop_loss_capacity_reached"
+    assert any(
+        "PORTFOLIO ENTRY GATE: BLOCKED | "
+        "session_stop_loss_capacity_reached" in line
+        for line in outputs
+    )
+    assert any("remaining_stop_capacity=1" in line for line in outputs)
 
 
 def test_loss_loop_state_failure_blocks_entry_but_not_risk_check():

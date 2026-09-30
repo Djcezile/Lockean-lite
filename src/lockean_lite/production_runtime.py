@@ -50,6 +50,9 @@ from lockean_lite.openai_recommendation_model import (
 from lockean_lite.paper_portfolio_snapshot import (
     read_live_paper_portfolio_snapshot,
 )
+from lockean_lite.portfolio_gate import (
+    evaluate_session_stop_loss_capacity,
+)
 from lockean_lite.safe_error_reporting import (
     safe_exception_reason,
 )
@@ -325,6 +328,14 @@ def run_production_autonomous_cycle(
         )
         if refreshed_loss_loop_state is None:
             return portfolio_decision
+        capacity_decision = evaluate_session_stop_loss_capacity(
+            snapshot=portfolio_snapshot,
+            remaining_capacity=(
+                refreshed_loss_loop_state.remaining_stop_loss_capacity
+            ),
+        )
+        if not capacity_decision.allowed:
+            return capacity_decision
         return evaluate_session_loss_loop_proposal(
             proposal=proposal,
             state=refreshed_loss_loop_state,
