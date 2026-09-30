@@ -19,6 +19,7 @@ _TAKE_PROFIT_PUT_PREFIX = "lockean-tp-put-"
 @dataclass(frozen=True)
 class SessionLossLoopState:
     confirmed_stop_loss_fills: int
+    remaining_stop_loss_capacity: int
     blocked_direction: str | None
     cooldown_until: datetime | None
     halt_all_entries: bool
@@ -150,10 +151,15 @@ def read_session_loss_loop_state(
 
     fills.sort(key=lambda item: item[0])
     confirmed_fills = sum(item[2] for item in fills)
+    remaining_stop_loss_capacity = max(
+        0,
+        maximum_stop_loss_fills - confirmed_fills,
+    )
 
     if confirmed_fills >= maximum_stop_loss_fills:
         return SessionLossLoopState(
             confirmed_stop_loss_fills=confirmed_fills,
+            remaining_stop_loss_capacity=remaining_stop_loss_capacity,
             blocked_direction=None,
             cooldown_until=None,
             halt_all_entries=True,
@@ -168,6 +174,7 @@ def read_session_loss_loop_state(
         if normalized_now < cooldown_until:
             return SessionLossLoopState(
                 confirmed_stop_loss_fills=confirmed_fills,
+                remaining_stop_loss_capacity=remaining_stop_loss_capacity,
                 blocked_direction=last_direction,
                 cooldown_until=cooldown_until,
                 halt_all_entries=False,
@@ -176,6 +183,7 @@ def read_session_loss_loop_state(
 
     return SessionLossLoopState(
         confirmed_stop_loss_fills=confirmed_fills,
+        remaining_stop_loss_capacity=remaining_stop_loss_capacity,
         blocked_direction=None,
         cooldown_until=None,
         halt_all_entries=False,
