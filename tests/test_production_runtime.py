@@ -38,6 +38,10 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         allowed=True,
         reason="entry_portfolio_policy_passed",
     )
+    fake_capacity_decision = SimpleNamespace(
+        allowed=True,
+        reason="session_stop_loss_capacity_available",
+    )
     fake_loss_loop_decision = SimpleNamespace(
         allowed=False,
         reason="same_direction_stop_loss_cooldown_active",
@@ -157,6 +161,16 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         fake_entry_policy,
     )
 
+    def fake_capacity_policy(*, snapshot, remaining_capacity):
+        captured["capacity_snapshot"] = snapshot
+        captured["remaining_capacity"] = remaining_capacity
+        return fake_capacity_decision
+
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.evaluate_session_stop_loss_capacity",
+        fake_capacity_policy,
+    )
+
     def fake_loss_loop_policy(*, proposal, state):
         captured["loss_loop_proposal"] = proposal
         captured["loss_loop_state"] = state
@@ -252,7 +266,10 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
             "production-001"
         ),
         loss_loop_state=fake_loss_loop_state,
-        loss_loop_state_provider=lambda: fake_refreshed_loss_loop_state,
+        loss_loop_state_provider=lambda: SimpleNamespace(
+            remaining_stop_loss_capacity=1,
+            marker=fake_refreshed_loss_loop_state,
+        ),
     )
 
     assert result is expected_result
@@ -315,7 +332,12 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
 
     assert captured["entry_policy_snapshot"] == "portfolio-snapshot"
     assert captured["loss_loop_proposal"] == "candidate-proposal"
-    assert captured["loss_loop_state"] is fake_refreshed_loss_loop_state
+    assert captured["capacity_snapshot"] == "portfolio-snapshot"
+    assert captured["remaining_capacity"] == 1
+    assert (
+        captured["loss_loop_state"].marker
+        is fake_refreshed_loss_loop_state
+    )
     assert captured["combined_policy_result"] is fake_loss_loop_decision
 
 
