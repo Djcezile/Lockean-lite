@@ -102,6 +102,7 @@ def test_one_confirmed_stop_fill_blocks_only_that_direction_for_one_hour():
     )
 
     assert state.confirmed_stop_loss_fills == 1
+    assert state.remaining_stop_loss_capacity == 1
     assert state.blocked_direction == "bullish"
     assert state.cooldown_until == fill_time + timedelta(hours=1)
     assert not state.halt_all_entries
@@ -137,6 +138,7 @@ def test_direction_cooldown_expires_without_erasing_confirmed_fill_count():
     )
 
     assert state.confirmed_stop_loss_fills == 1
+    assert state.remaining_stop_loss_capacity == 1
     assert state.blocked_direction is None
     assert state.cooldown_until is None
     assert state.reason == "loss_loop_entry_allowed"
@@ -166,6 +168,7 @@ def test_second_confirmed_stop_fill_halts_all_entries_for_session():
     )
 
     assert state.confirmed_stop_loss_fills == 2
+    assert state.remaining_stop_loss_capacity == 0
     assert state.halt_all_entries
     assert state.blocked_direction is None
     assert state.reason == "session_stop_loss_limit_reached"
@@ -192,6 +195,7 @@ def test_multi_unit_stop_fill_counts_each_closed_spread_unit():
     )
 
     assert state.confirmed_stop_loss_fills == 2
+    assert state.remaining_stop_loss_capacity == 0
     assert state.halt_all_entries
 
 
@@ -210,6 +214,7 @@ def test_duplicate_broker_order_rows_do_not_double_count_fill():
     )
 
     assert state.confirmed_stop_loss_fills == 1
+    assert state.remaining_stop_loss_capacity == 1
     assert not state.halt_all_entries
 
 
@@ -254,6 +259,7 @@ def test_prior_market_day_stop_fill_does_not_carry_into_new_session():
     )
 
     assert state.confirmed_stop_loss_fills == 0
+    assert state.remaining_stop_loss_capacity == 2
     assert state.reason == "loss_loop_entry_allowed"
 
 
@@ -273,6 +279,7 @@ def test_take_profit_fill_does_not_count_as_stop_loss():
     )
 
     assert state.confirmed_stop_loss_fills == 0
+    assert state.remaining_stop_loss_capacity == 2
     assert not state.halt_all_entries
 
 
@@ -327,6 +334,7 @@ def test_proposal_evaluation_fails_closed_for_ambiguous_direction():
     )
     state = SessionLossLoopState(
         confirmed_stop_loss_fills=1,
+        remaining_stop_loss_capacity=1,
         blocked_direction="bullish",
         cooldown_until=NOW + timedelta(minutes=30),
         halt_all_entries=False,
