@@ -77,37 +77,35 @@ The dashboard reads Alpaca account state, positions, orders, P&L and clock. It d
 
 ## Autonomous Paper Session
 
-Lockean Lite now runs continuously from one command against the linked Alpaca paper account. It waits while the market is closed, repeatedly evaluates opportunities while the market is open, reconciles against Alpaca every cycle, and exits after the session closes.
+Lockean Lite now runs continuously from one command against the linked Alpaca
+paper account. The launcher creates the repository `logs` directory when
+needed, mirrors the session to the terminal, and writes the complete record to
+`logs/lockean_lite_DAY<N>_<timestamp>.log`.
 
 ```powershell
-python -m lockean_lite.autonomous_session `
-  --completed-through 2026-09-28 `
-  --expiration 2026-10-02 `
-  --interval-seconds 300 `
-  --risk-check-interval-seconds 30 `
-  --entry-cooldown-seconds 600 `
-  --maximum-open-spreads 2 `
-  --maximum-same-structure-units 1 `
-  --maximum-allowed-loss 150 `
-  --maximum-daily-loss 300 `
-  --take-profit-percent 20 `
-  --stop-loss-percent 20 `
-  --loss-loop-direction-cooldown-seconds 3600 `
-  --maximum-session-stop-loss-fills 2 `
-  --activity-mode active_paper
+python -m lockean_lite.session_launcher `
+  --day-number 17 `
+  --completed-through 2026-09-29 `
+  --expiration 2026-10-02
 ```
+
+The launcher owns the validated active-paper arguments so the terminal command
+cannot silently omit a safety control. Local log contents remain excluded from
+Git by `.gitignore`.
 
 Current session controls:
 
 - Alpaca **paper-only** trading client
-- maximum **5 committed spread units**
+- maximum **2 committed spread units**
 - pending MLEG orders count toward capacity
 - each new autonomous recommendation is constrained to **1 spread unit**
 - **$150** maximum allowed loss per proposal
-- **$750** daily-loss halt for new entries
+- **$300** daily-loss halt for new entries
 - first confirmed stop-loss fill blocks that direction for **60 minutes**
 - second confirmed stop-loss spread-unit fill disables all new entries for the
   rest of the market session
+- positions already open when the second stop is confirmed continue through
+  normal take-profit and stop-loss management; they are not forcibly liquidated
 - stop-loss state is rebuilt from tagged closed Alpaca orders after a restart;
   submissions, stale cancellations, and take-profit fills do not count
 - Alpaca market-clock awareness
@@ -251,7 +249,7 @@ python -m pytest -q
 Current verified engineering seal:
 
 ```text
-213 passed
+341 passed
 0 regressions
 ```
 
