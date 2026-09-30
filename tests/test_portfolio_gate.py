@@ -100,6 +100,42 @@ def test_portfolio_gate_allows_when_filled_and_pending_total_is_below_cap():
     assert result.reason == "portfolio_entry_allowed"
 
 
+def test_portfolio_gate_blocks_when_committed_spread_uses_remaining_stop_capacity():
+    result = evaluate_portfolio_entry(
+        snapshot=_snapshot(managed_spreads=1),
+        maximum_open_spreads=2,
+        remaining_session_stop_loss_capacity=1,
+    )
+
+    assert result.allowed is False
+    assert result.reason == "session_stop_loss_capacity_reached"
+
+
+def test_portfolio_gate_allows_one_spread_when_one_stop_capacity_remains():
+    result = evaluate_portfolio_entry(
+        snapshot=_snapshot(managed_spreads=0),
+        maximum_open_spreads=2,
+        remaining_session_stop_loss_capacity=1,
+    )
+
+    assert result.allowed is True
+    assert result.reason == "portfolio_entry_allowed"
+
+
+def test_portfolio_gate_counts_pending_entry_against_remaining_stop_capacity():
+    result = evaluate_portfolio_entry(
+        snapshot=_snapshot(
+            pending_entry_spread_units=1,
+            pending_mleg_orders=(object(),),
+        ),
+        maximum_open_spreads=2,
+        remaining_session_stop_loss_capacity=1,
+    )
+
+    assert result.allowed is False
+    assert result.reason == "session_stop_loss_capacity_reached"
+
+
 def test_portfolio_gate_blocks_after_daily_loss_limit():
     result = evaluate_portfolio_entry(
         snapshot=_snapshot(
