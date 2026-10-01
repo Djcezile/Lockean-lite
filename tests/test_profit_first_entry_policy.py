@@ -6,6 +6,7 @@ import pytest
 from lockean_lite.option_leg import OptionLeg
 from lockean_lite.profit_first_entry_policy import (
     evaluate_profit_first_entry,
+    evaluate_profit_first_market_context,
 )
 from lockean_lite.trade_proposal import TradeProposal
 
@@ -60,6 +61,36 @@ def _context(**overrides):
     }
     context.update(overrides)
     return context
+
+
+@pytest.mark.parametrize(
+    ("signal", "expected_reason"),
+    [
+        ("trend", "profit_first_trend_not_confirmed"),
+        ("momentum", "profit_first_momentum_not_confirmed"),
+        ("breakout", "profit_first_breakout_not_confirmed"),
+        ("volatility", "profit_first_volatility_not_confirmed"),
+    ],
+)
+def test_profit_first_market_preflight_rejects_before_trade_selection(
+    signal,
+    expected_reason,
+):
+    result = evaluate_profit_first_market_context(
+        market_context=_context(**{signal: "FAIL"}),
+    )
+
+    assert result.allowed is False
+    assert result.reason == expected_reason
+
+
+def test_profit_first_market_preflight_allows_candidate_evaluation_only_after_confluence():
+    result = evaluate_profit_first_market_context(
+        market_context=_context(),
+    )
+
+    assert result.allowed is True
+    assert result.reason == "profit_first_market_context_eligible"
 
 
 def test_profit_first_policy_allows_high_confluence_positive_economics():
@@ -160,4 +191,3 @@ def test_profit_first_policy_fails_closed_without_trusted_pricing():
 
     assert result.allowed is False
     assert result.reason == "profit_first_pricing_missing"
-

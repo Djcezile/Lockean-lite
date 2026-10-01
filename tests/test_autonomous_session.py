@@ -152,7 +152,8 @@ def test_completed_session_prints_profitability_scorecard():
     assert any("PROFITABILITY SCORECARD" in line for line in output)
     assert any("NET EQUITY CHANGE: $25.30" in line for line in output)
     assert any("BROKER DAY P&L: $25.30" in line for line in output)
-    assert any("OUTCOME: POSITIVE" in line for line in output)
+    assert any("BROKER OUTCOME: POSITIVE" in line for line in output)
+    assert any("ALL-IN NET P&L: UNKNOWN" in line for line in output)
 
 
 def test_session_blocks_new_entries_at_five_spread_units_but_keeps_monitoring():

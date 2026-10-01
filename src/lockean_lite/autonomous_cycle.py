@@ -62,6 +62,23 @@ def _agent_diagnostics(
     )
 
 
+def _market_preflight_diagnostics(
+    *,
+    market_context: dict[str, str],
+    reason: str,
+) -> tuple[str, ...]:
+    context_text = ";".join(
+        f"{key}={value}"
+        for key, value in market_context.items()
+    )
+
+    return (
+        f"market_context={context_text}",
+        f"market_preflight=BLOCKED;reason={reason}",
+        "agent_decision=SKIPPED",
+    )
+
+
 def run_autonomous_trade_cycle(
     *,
     spy_evidence,
@@ -72,6 +89,7 @@ def run_autonomous_trade_cycle(
     authority,
     execution_gateway,
     proposal_policy_checker=None,
+    market_context_policy_checker=None,
     intraday_context: dict[str, str] | None = None,
 ) -> AutonomousTradeCycleResult:
     if intraday_context is None:
@@ -85,6 +103,20 @@ def run_autonomous_trade_cycle(
             vix_evidence=vix_evidence,
             intraday_context=intraday_context,
         )
+
+    if market_context_policy_checker is not None:
+        market_decision = market_context_policy_checker(
+            market_context=market_context,
+        )
+        if not market_decision.allowed:
+            return AutonomousTradeCycleResult(
+                status="NO_TRADE",
+                reason=market_decision.reason,
+                diagnostics=_market_preflight_diagnostics(
+                    market_context=market_context,
+                    reason=market_decision.reason,
+                ),
+            )
 
     candidate_quotes = (
         candidate_quotes_provider()

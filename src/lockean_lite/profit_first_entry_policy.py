@@ -29,6 +29,48 @@ def _decision(
     )
 
 
+def evaluate_profit_first_market_context(
+    *,
+    market_context: dict[str, str],
+) -> ProfitFirstEntryDecision:
+    """Reject an ineligible market before option discovery or AI inference."""
+    for signal in (
+        "trend",
+        "momentum",
+        "breakout",
+        "volatility",
+    ):
+        if market_context.get(signal) != "PASS":
+            return _decision(
+                allowed=False,
+                reason=f"profit_first_{signal}_not_confirmed",
+            )
+
+    if market_context.get("intraday_status") != "AVAILABLE":
+        return _decision(
+            allowed=False,
+            reason="profit_first_intraday_not_ready",
+        )
+
+    if any(
+        market_context.get(key) != "UP"
+        for key in (
+            "spy_session_direction",
+            "intraday_direction_15m",
+            "intraday_direction_30m",
+        )
+    ):
+        return _decision(
+            allowed=False,
+            reason="profit_first_intraday_alignment_missing",
+        )
+
+    return _decision(
+        allowed=True,
+        reason="profit_first_market_context_eligible",
+    )
+
+
 def _bull_call_legs(proposal: TradeProposal):
     if len(proposal.legs) != 2:
         return None
@@ -159,37 +201,13 @@ def evaluate_profit_first_entry(
             reward_to_risk=reward_to_risk,
         )
 
-    for signal in (
-        "trend",
-        "momentum",
-        "breakout",
-        "volatility",
-    ):
-        if market_context.get(signal) != "PASS":
-            return _decision(
-                allowed=False,
-                reason=f"profit_first_{signal}_not_confirmed",
-                reward_to_risk=reward_to_risk,
-            )
-
-    if market_context.get("intraday_status") != "AVAILABLE":
+    market_decision = evaluate_profit_first_market_context(
+        market_context=market_context,
+    )
+    if not market_decision.allowed:
         return _decision(
             allowed=False,
-            reason="profit_first_intraday_not_ready",
-            reward_to_risk=reward_to_risk,
-        )
-
-    if any(
-        market_context.get(key) != "UP"
-        for key in (
-            "spy_session_direction",
-            "intraday_direction_15m",
-            "intraday_direction_30m",
-        )
-    ):
-        return _decision(
-            allowed=False,
-            reason="profit_first_intraday_alignment_missing",
+            reason=market_decision.reason,
             reward_to_risk=reward_to_risk,
         )
 
@@ -198,4 +216,3 @@ def evaluate_profit_first_entry(
         reason="profit_first_entry_eligible",
         reward_to_risk=reward_to_risk,
     )
-
