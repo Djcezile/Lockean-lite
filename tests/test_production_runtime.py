@@ -38,6 +38,10 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         allowed=True,
         reason="entry_portfolio_policy_passed",
     )
+    fake_profit_policy_decision = SimpleNamespace(
+        allowed=True,
+        reason="profit_first_entry_eligible",
+    )
     fake_capacity_decision = SimpleNamespace(
         allowed=True,
         reason="session_stop_loss_capacity_available",
@@ -95,6 +99,7 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         proposal_id_provider,
         model_callable,
         maximum_allowed_loss,
+        activity_mode,
     ):
         captured["recommendation_model"] = (
             model_callable
@@ -102,6 +107,7 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         captured["ai_policy"] = (
             maximum_allowed_loss
         )
+        captured["activity_mode"] = activity_mode
 
         return fake_recommendation_provider
 
@@ -159,6 +165,26 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
     monkeypatch.setattr(
         "lockean_lite.production_runtime.evaluate_entry_proposal_policy",
         fake_entry_policy,
+    )
+
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.build_agent_market_context",
+        lambda **kwargs: {
+            "intraday_status": "AVAILABLE",
+            "spy_session_direction": "UP",
+            "intraday_direction_15m": "UP",
+            "intraday_direction_30m": "UP",
+        },
+    )
+
+    def fake_profit_policy(*, proposal, market_context):
+        captured["profit_proposal"] = proposal
+        captured["profit_market_context"] = market_context
+        return fake_profit_policy_decision
+
+    monkeypatch.setattr(
+        "lockean_lite.production_runtime.evaluate_profit_first_entry",
+        fake_profit_policy,
     )
 
     def fake_capacity_policy(*, snapshot, remaining_capacity):
@@ -265,6 +291,13 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         proposal_id_provider=lambda: (
             "production-001"
         ),
+        agent_activity_mode="profit_first",
+        intraday_context={
+            "intraday_status": "AVAILABLE",
+            "spy_session_direction": "UP",
+            "intraday_direction_15m": "UP",
+            "intraday_direction_30m": "UP",
+        },
         loss_loop_state=fake_loss_loop_state,
         loss_loop_state_provider=lambda: SimpleNamespace(
             remaining_stop_loss_capacity=1,
@@ -277,6 +310,7 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
     assert captured["ai_policy"] == Decimal(
         "150.00"
     )
+    assert captured["activity_mode"] == "profit_first"
 
     assert captured[
         "authority_policy"
@@ -331,6 +365,8 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
     ] is fake_gateway
 
     assert captured["entry_policy_snapshot"] == "portfolio-snapshot"
+    assert captured["profit_proposal"] == "candidate-proposal"
+    assert captured["profit_market_context"]["intraday_status"] == "AVAILABLE"
     assert captured["loss_loop_proposal"] == "candidate-proposal"
     assert captured["capacity_snapshot"] == "portfolio-snapshot"
     assert captured["remaining_capacity"] == 1

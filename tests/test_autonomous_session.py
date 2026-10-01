@@ -125,6 +125,36 @@ def test_session_waits_when_market_is_closed_without_running_agent():
     assert summary.last_reason == "market_closed_waiting_for_open"
 
 
+def test_completed_session_prints_profitability_scorecard():
+    clocks = iter((_open_clock(), _closed_clock()))
+    portfolios = iter(
+        (
+            _portfolio(day_pl=Decimal("0.00")),
+            _portfolio(day_pl=Decimal("25.30")),
+        )
+    )
+    output = []
+
+    summary = run_autonomous_paper_session(
+        clock_provider=lambda: next(clocks),
+        portfolio_provider=lambda: next(portfolios),
+        cycle_runner=lambda: SimpleNamespace(
+            status="NO_TRADE",
+            reason="agent_declined_trade",
+            execution_proof=None,
+        ),
+        interval_seconds=1,
+        sleep_fn=lambda seconds: None,
+        output_fn=output.append,
+    )
+
+    assert summary.last_status == "SESSION_COMPLETE"
+    assert any("PROFITABILITY SCORECARD" in line for line in output)
+    assert any("NET EQUITY CHANGE: $25.30" in line for line in output)
+    assert any("BROKER DAY P&L: $25.30" in line for line in output)
+    assert any("OUTCOME: POSITIVE" in line for line in output)
+
+
 def test_session_blocks_new_entries_at_five_spread_units_but_keeps_monitoring():
     cycle_calls = []
     sleeps = []

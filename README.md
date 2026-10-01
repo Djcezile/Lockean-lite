@@ -1,6 +1,13 @@
 # Lockean Lite
 
-**Autonomous judgment. Independent authority. Real Alpaca paper trading.**
+**Profit is the proof. Everything else must earn its place.**
+
+Lockean Lite exists to maximize **durable net profitability** in Alpaca paper
+trading. Every component must create profit, preserve profit, scale profit, or
+prove profit. Architecture, safety, and presentation are supporting systems,
+not substitutes for positive net P&L.
+
+The permanent authority boundary remains non-negotiable:
 
 Lockean Lite was built for the **Alpaca AI Trading Agents Hackathon** around one question:
 
@@ -9,6 +16,29 @@ Lockean Lite was built for the **Alpaca AI Trading Agents Hackathon** around one
 The AI may analyze the market and decide `TRADE` or `NO_TRADE`, but it cannot authorize itself and cannot reach the broker directly. A separate Lockean Authority validates trusted evidence, proposal integrity, defined risk, account eligibility, and policy. If authorized, it issues a short-lived cryptographically authenticated receipt bound to the exact proposal fingerprint. A separate Execution Gateway must verify that receipt before an Alpaca paper order can be submitted.
 
 **No component can create, authorize, and execute a trade alone.**
+
+## Product Objective
+
+The primary score is broker-grounded net P&L after losses and execution
+friction. Trade count, AI activity, test count, and presentation quality are
+not business outcomes.
+
+The normal launcher now uses `profit_first` mode:
+
+- never trade merely to exercise the lifecycle or fill a log;
+- prefer cash when evidence is incomplete, mixed, stale, or economically weak;
+- admit only the first explicit strategy hypothesis: a SPY bull-call debit
+  spread with aligned daily trend, momentum, breakout, and volatility evidence;
+- require current-session, 15-minute, and 30-minute upside alignment;
+- require at least **1.50:1** maximum reward-to-risk after estimated round-trip
+  costs, using trusted quote-derived debit rather than AI-supplied pricing;
+- end new-entry authority after the first confirmed session stop; and
+- publish an end-of-session profitability scorecard from Alpaca equity and
+  broker day P&L.
+
+This is a selective **experimental strategy contract**, not a profitability
+claim. Live-capital authority remains disabled until a strategy earns promotion
+through positive out-of-sample paper evidence.
 
 ## Live Demo
 
@@ -84,36 +114,40 @@ needed, mirrors the session to the terminal, and writes the complete record to
 
 ```powershell
 python -m lockean_lite.session_launcher `
-  --day-number 17 `
-  --completed-through 2026-09-29 `
+  --day-number 18 `
+  --completed-through 2026-09-30 `
   --expiration 2026-10-02
 ```
 
-The launcher owns the validated active-paper arguments so the terminal command
+The launcher owns the approved profit-first arguments so the terminal command
 cannot silently omit a safety control. Local log contents remain excluded from
 Git by `.gitignore`.
 
 Current session controls:
 
 - Alpaca **paper-only** trading client
-- maximum **2 committed spread units**
+- `profit_first` judgment with no activity-generation bias
+- maximum **1 committed spread unit**
 - pending MLEG orders count toward capacity
 - each new autonomous recommendation is constrained to **1 spread unit**
 - **$150** maximum allowed loss per proposal
-- **$300** daily-loss halt for new entries
-- first confirmed stop-loss fill blocks that direction for **60 minutes**
+- **$150** daily-loss halt for new entries
+- **30%** take-profit target and **20%** stop-loss threshold
+- first confirmed stop-loss fill disables all later entries for the session
 - each confirmed stop also reduces the maximum committed spread capacity by
-  one; with a two-stop limit, one stopped spread permits at most one remaining
-  committed spread
-- second confirmed stop-loss spread-unit fill disables all new entries for the
-  rest of the market session
+  one; with a one-stop limit, the first stop leaves zero entry capacity
 - the remaining-capacity gate prevents already-authorized concurrent exposure
   from producing more stopped spread units than the configured session limit
+- AI entry evaluations run no more often than every **15 minutes**, with a
+  **30-minute** post-submission cooldown
+- no new position may be opened during the final **30 minutes** of the session
 - stop-loss state is rebuilt from tagged closed Alpaca orders after a restart;
   submissions, stale cancellations, and take-profit fills do not count
 - Alpaca market-clock awareness
 - temporary Alpaca / AI / market-data failures fail closed for that iteration and reconcile next cycle
 - session continues monitoring even when new entries are blocked
+- completed sessions print opening equity, closing equity, net equity change,
+  broker day P&L, evaluation count, and a positive/flat/negative outcome
 
 The runner does not simulate P&L. Orders are submitted to Alpaca paper trading, and subsequent account equity, positions and P&L are read back from Alpaca.
 
@@ -252,7 +286,7 @@ python -m pytest -q
 Current verified engineering seal:
 
 ```text
-345 passed
+363 passed
 0 regressions
 ```
 
@@ -260,7 +294,10 @@ Current verified engineering seal:
 
 ## Scope
 
-Lockean Lite is a hackathon prototype operating against **Alpaca paper trading only**. It currently proves one defined-risk SPY options vertical slice rather than claiming to be a complete production portfolio platform.
+Lockean Lite is an experimental profitability research and autonomous execution
+prototype operating against **Alpaca paper trading only**. It currently tests
+one defined-risk SPY options vertical slice rather than claiming to be a
+complete production portfolio platform or a profitable strategy.
 
 Its central thesis is:
 
@@ -268,4 +305,6 @@ Its central thesis is:
 
 ## Disclaimer
 
-Lockean Lite is a paper-trading hackathon prototype. It is not financial advice and is not presented as a production-ready live-money trading system.
+Lockean Lite is a paper-trading research prototype. It is not financial advice,
+does not guarantee profit, and is not presented as a production-ready
+live-money trading system.

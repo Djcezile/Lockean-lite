@@ -22,6 +22,10 @@ from lockean_lite.pending_entry_manager import maintain_pending_entry_orders
 from lockean_lite.portfolio_gate import evaluate_portfolio_entry
 from lockean_lite.position_exit_manager import run_paper_spread_exit_cycle
 from lockean_lite.production_runtime import run_live_production_autonomous_cycle
+from lockean_lite.profitability_scorecard import (
+    build_profitability_scorecard,
+    render_profitability_scorecard,
+)
 from lockean_lite.safe_error_reporting import safe_exception_reason
 from lockean_lite.session_loss_loop_policy import (
     read_session_loss_loop_state,
@@ -240,6 +244,7 @@ def run_autonomous_paper_session(
     last_status = "WAITING"
     last_reason = "session_not_started"
     market_has_opened = False
+    opening_equity = None
 
     # This elapsed-session clock advances by the amount actually slept. It
     # keeps entry scheduling deterministic in tests while matching wall-clock
@@ -312,11 +317,24 @@ def run_autonomous_paper_session(
             f"{'OPEN' if clock.is_open else 'CLOSED'}"
         )
 
+        if opening_equity is None:
+            opening_equity = snapshot.equity
+
         if not clock.is_open:
             if market_has_opened:
                 last_status = "SESSION_COMPLETE"
                 last_reason = "market_closed"
                 output_fn("MARKET CLOSED: autonomous session complete")
+                scorecard = build_profitability_scorecard(
+                    opening_equity=opening_equity,
+                    closing_equity=snapshot.equity,
+                    broker_day_pl=snapshot.day_pl,
+                    entry_evaluations=trade_cycles,
+                )
+                output_fn("")
+                output_fn(
+                    render_profitability_scorecard(scorecard)
+                )
                 return _summary(
                     iterations=iterations,
                     trade_cycles=trade_cycles,
@@ -947,11 +965,13 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--activity-mode",
-        choices=("balanced", "active_paper"),
+        choices=("balanced", "active_paper", "profit_first"),
         default="balanced",
         help=(
             "balanced allows ordinary AI judgment; active_paper intentionally "
-            "encourages more paper activity for lifecycle testing."
+            "encourages more paper activity for lifecycle testing; "
+            "profit_first prioritizes selective positive-expectancy evidence "
+            "over trade count."
         ),
     )
     parser.add_argument(
@@ -1136,6 +1156,13 @@ def main(argv=None) -> int:
         "NEW_ENTRIES="
         f"{'DISABLED' if args.risk_management_only else 'ENABLED'}"
     )
+
+    if args.activity_mode == "profit_first":
+        print(
+            "PRODUCT OBJECTIVE: MAXIMIZE DURABLE NET PROFIT | "
+            "STRATEGY STATUS=EXPERIMENTAL | "
+            "TRADE COUNT IS NOT A SUCCESS METRIC"
+        )
 
     run_autonomous_paper_session(
         clock_provider=clock_provider,

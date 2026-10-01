@@ -46,6 +46,7 @@ SUPPORTED_ACTIVITY_MODES = frozenset(
     {
         "balanced",
         "active_paper",
+        "profit_first",
     }
 )
 
@@ -195,6 +196,30 @@ def build_recommendation_prompt(
             "You still have no permission or broker authority. "
             "Lockean independently reconstructs pricing and risk "
             "and may reject any proposal.\n"
+        )
+
+    if activity_mode == "profit_first":
+        activity_context = (
+            "\nPROFIT-FIRST PAPER MODE:\n"
+            "This is an Alpaca PAPER account. The primary objective is "
+            "positive net realized P&L after transaction costs and "
+            "execution friction, not trade count.\n"
+            "Never trade to generate activity, fill a log, or demonstrate "
+            "the lifecycle. NO_TRADE is the preferred decision unless the "
+            "combined evidence supports a clear directional edge and the "
+            "candidate economics remain favorable after the bid/ask spread.\n"
+            "The currently tested strategy hypothesis is a bull call debit "
+            "spread under aligned bullish daily and intraday evidence. Do "
+            "not propose a bear put merely because some bullish indicators "
+            "failed; a failed bullish condition is not proof of a bearish "
+            "edge.\n"
+            "Prefer liquid-looking candidates with tight quotes and enough "
+            "strike width to preserve asymmetric upside relative to debit "
+            "paid. Preserve cash when evidence is incomplete, mixed, stale, "
+            "or economically weak.\n"
+            "You still have no permission or broker authority. Lockean "
+            "independently reconstructs pricing, applies the deterministic "
+            "profit-first entry gate, and may reject any proposal.\n"
         )
 
     return (
