@@ -17,13 +17,18 @@ def test_scorecard_uses_broker_money_results_as_the_outcome():
     assert scorecard.equity_change == Decimal("25.30")
     assert scorecard.broker_day_pl == Decimal("25.30")
     assert scorecard.outcome == "POSITIVE"
-    assert scorecard.profitable is True
+    assert scorecard.broker_profitable is True
+    assert scorecard.all_in_net_pl is None
+    assert scorecard.all_in_profitable is None
 
     rendered = render_profitability_scorecard(scorecard)
     assert "PROFITABILITY SCORECARD" in rendered
     assert "NET EQUITY CHANGE: $25.30" in rendered
     assert "BROKER DAY P&L: $25.30" in rendered
-    assert "OUTCOME: POSITIVE" in rendered
+    assert "SCOPE: BROKER ACCOUNT ONLY" in rendered
+    assert "BROKER OUTCOME: POSITIVE" in rendered
+    assert "OPERATING COSTS: NOT TRACKED" in rendered
+    assert "ALL-IN NET P&L: UNKNOWN" in rendered
 
 
 def test_scorecard_does_not_call_a_negative_day_success():
@@ -35,7 +40,8 @@ def test_scorecard_does_not_call_a_negative_day_success():
     )
 
     assert scorecard.outcome == "NEGATIVE"
-    assert scorecard.profitable is False
+    assert scorecard.broker_profitable is False
+    assert scorecard.all_in_profitable is None
 
 
 def test_scorecard_labels_unchanged_capital_flat():
@@ -47,5 +53,5 @@ def test_scorecard_labels_unchanged_capital_flat():
     )
 
     assert scorecard.outcome == "FLAT"
-    assert scorecard.profitable is False
-
+    assert scorecard.broker_profitable is False
+    assert scorecard.all_in_profitable is None

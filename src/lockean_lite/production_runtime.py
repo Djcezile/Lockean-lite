@@ -58,6 +58,7 @@ from lockean_lite.portfolio_gate import (
 )
 from lockean_lite.profit_first_entry_policy import (
     evaluate_profit_first_entry,
+    evaluate_profit_first_market_context,
 )
 from lockean_lite.safe_error_reporting import (
     safe_exception_reason,
@@ -400,5 +401,10 @@ def run_production_autonomous_cycle(
         ),
         proposal_policy_checker=(
             proposal_policy_checker
+        ),
+        market_context_policy_checker=(
+            evaluate_profit_first_market_context
+            if agent_activity_mode == "profit_first"
+            else None
         ),
     )

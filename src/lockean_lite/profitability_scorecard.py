@@ -10,7 +10,9 @@ class ProfitabilityScorecard:
     broker_day_pl: Decimal
     entry_evaluations: int
     outcome: str
-    profitable: bool
+    broker_profitable: bool
+    all_in_net_pl: Decimal | None
+    all_in_profitable: bool | None
 
 
 def build_profitability_scorecard(
@@ -43,7 +45,9 @@ def build_profitability_scorecard(
         broker_day_pl=broker_day_pl,
         entry_evaluations=entry_evaluations,
         outcome=outcome,
-        profitable=broker_day_pl > 0,
+        broker_profitable=broker_day_pl > 0,
+        all_in_net_pl=None,
+        all_in_profitable=None,
     )
 
 
@@ -58,12 +62,14 @@ def render_profitability_scorecard(
         (
             "PROFITABILITY SCORECARD",
             "=======================",
+            "SCOPE: BROKER ACCOUNT ONLY",
             f"OPENING EQUITY: {_money(scorecard.opening_equity)}",
             f"CLOSING EQUITY: {_money(scorecard.closing_equity)}",
             f"NET EQUITY CHANGE: {_money(scorecard.equity_change)}",
             f"BROKER DAY P&L: {_money(scorecard.broker_day_pl)}",
             f"ENTRY EVALUATIONS: {scorecard.entry_evaluations}",
-            f"OUTCOME: {scorecard.outcome}",
+            f"BROKER OUTCOME: {scorecard.outcome}",
+            "OPERATING COSTS: NOT TRACKED",
+            "ALL-IN NET P&L: UNKNOWN",
         )
     )
-

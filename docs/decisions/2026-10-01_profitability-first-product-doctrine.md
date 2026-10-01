@@ -74,18 +74,27 @@ The AI may still decline a qualifying setup. It cannot override a failed
 profit-first gate, determine trusted pricing, authorize itself, or reach the
 broker directly.
 
+Hard market prerequisites are evaluated before option discovery and AI
+inference. This avoids paying for a probabilistic judgment when deterministic,
+immutable evidence has already made the session ineligible. Structure and
+quote economics remain a second deterministic gate after trusted proposal
+reconstruction.
+
 ## Profitability Scorecard
 
-Every naturally completed session reports:
+Every naturally completed session reports the broker-account scope:
 
 - opening equity;
 - closing equity;
 - net equity change;
 - Alpaca broker day P&L;
-- number of AI entry evaluations; and
-- `POSITIVE`, `FLAT`, or `NEGATIVE` outcome.
+- number of entry evaluations; and
+- broker `POSITIVE`, `FLAT`, or `NEGATIVE` outcome.
 
-An operationally clean negative day is still a negative result.
+Until operating expenses are captured, the report must also state
+`OPERATING COSTS: NOT TRACKED` and `ALL-IN NET P&L: UNKNOWN`. An operationally
+clean negative day is still negative, and a broker-flat day is not an all-in
+profitability claim.
 
 ## Strategy Promotion Standard
 
@@ -122,4 +131,3 @@ may raise them when evidence warrants it.
 - Signal confluence is a testable hypothesis, not established alpha.
 - Paper fills do not prove identical live-market execution.
 - Live-capital authority remains disabled.
-

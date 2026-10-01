@@ -170,6 +170,10 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
     monkeypatch.setattr(
         "lockean_lite.production_runtime.build_agent_market_context",
         lambda **kwargs: {
+            "trend": "PASS",
+            "momentum": "PASS",
+            "breakout": "PASS",
+            "volatility": "PASS",
             "intraday_status": "AVAILABLE",
             "spy_session_direction": "UP",
             "intraday_direction_15m": "UP",
@@ -266,6 +270,20 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         captured["combined_policy_result"] = kwargs[
             "proposal_policy_checker"
         ]("candidate-proposal", fake_quotes)
+        captured["market_preflight_result"] = kwargs[
+            "market_context_policy_checker"
+        ](
+            market_context={
+                "trend": "PASS",
+                "momentum": "PASS",
+                "breakout": "PASS",
+                "volatility": "PASS",
+                "intraday_status": "AVAILABLE",
+                "spy_session_direction": "UP",
+                "intraday_direction_15m": "UP",
+                "intraday_direction_30m": "UP",
+            }
+        )
 
         return expected_result
 
@@ -375,6 +393,11 @@ def test_production_runtime_composes_real_boundaries_with_same_lockean_policy(
         is fake_refreshed_loss_loop_state
     )
     assert captured["combined_policy_result"] is fake_loss_loop_decision
+    assert captured["market_preflight_result"].allowed is True
+    assert (
+        captured["market_preflight_result"].reason
+        == "profit_first_market_context_eligible"
+    )
 
 
 def test_production_runtime_rejects_missing_authority_signing_key():

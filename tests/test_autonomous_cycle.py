@@ -4,6 +4,7 @@ from datetime import (
     timedelta,
     timezone,
 )
+from types import SimpleNamespace
 from lockean_lite.market_evidence import (
     MarketBar,
     MarketEvidence,
@@ -509,6 +510,49 @@ def test_autonomous_cycle_allows_agent_to_choose_no_trade(
 
     assert account_calls == []
     assert workflow_calls == []
+
+
+def test_autonomous_cycle_market_preflight_skips_quotes_and_ai_when_ineligible():
+    spy_evidence, vix_evidence = (
+        _agent_market_evidence()
+    )
+
+    candidate_calls = []
+    recommendation_calls = []
+    account_calls = []
+
+    def market_context_policy_checker(*, market_context):
+        assert market_context["momentum"] == "FAIL"
+        return SimpleNamespace(
+            allowed=False,
+            reason="profit_first_momentum_not_confirmed",
+        )
+
+    result = run_autonomous_trade_cycle(
+        spy_evidence=spy_evidence,
+        vix_evidence=vix_evidence,
+        candidate_quotes_provider=lambda: candidate_calls.append(True),
+        recommendation_provider=(
+            lambda candidates, *, market_context: (
+                recommendation_calls.append(True)
+            )
+        ),
+        account_snapshot_provider=lambda: account_calls.append(True),
+        authority=object(),
+        execution_gateway=object(),
+        market_context_policy_checker=market_context_policy_checker,
+    )
+
+    assert result.status == "NO_TRADE"
+    assert result.reason == "profit_first_momentum_not_confirmed"
+    assert candidate_calls == []
+    assert recommendation_calls == []
+    assert account_calls == []
+    assert "agent_decision=SKIPPED" in result.diagnostics
+    assert (
+        "market_preflight=BLOCKED;"
+        "reason=profit_first_momentum_not_confirmed"
+    ) in result.diagnostics
 
 
 def test_autonomous_cycle_uses_shared_agent_market_context_builder(

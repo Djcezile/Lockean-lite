@@ -19,22 +19,26 @@ The AI may analyze the market and decide `TRADE` or `NO_TRADE`, but it cannot au
 
 ## Product Objective
 
-The primary score is broker-grounded net P&L after losses and execution
-friction. Trade count, AI activity, test count, and presentation quality are
-not business outcomes.
+The primary score is all-in net P&L after losses, execution friction, and
+operating costs. Alpaca provides the broker-grounded trading result; until AI
+and infrastructure expense is measured, Lockean explicitly reports all-in net
+P&L as unknown. Trade count, AI activity, test count, and presentation quality
+are not business outcomes.
 
 The normal launcher now uses `profit_first` mode:
 
 - never trade merely to exercise the lifecycle or fill a log;
 - prefer cash when evidence is incomplete, mixed, stale, or economically weak;
+- reject failed hard market prerequisites before option discovery or external
+  AI inference;
 - admit only the first explicit strategy hypothesis: a SPY bull-call debit
   spread with aligned daily trend, momentum, breakout, and volatility evidence;
 - require current-session, 15-minute, and 30-minute upside alignment;
 - require at least **1.50:1** maximum reward-to-risk after estimated round-trip
   costs, using trusted quote-derived debit rather than AI-supplied pricing;
 - end new-entry authority after the first confirmed session stop; and
-- publish an end-of-session profitability scorecard from Alpaca equity and
-  broker day P&L.
+- publish an end-of-session broker scorecard while explicitly identifying
+  untracked operating costs and unknown all-in net P&L.
 
 This is a selective **experimental strategy contract**, not a profitability
 claim. Live-capital authority remains disabled until a strategy earns promotion
@@ -53,7 +57,12 @@ The Streamlit Control Room is read-only. It refreshes from the same Alpaca paper
 ## Architecture
 
 ```text
-Alpaca market data + Cboe VIX + real SPY option candidates
+       Alpaca market data + Cboe VIX
+                            ↓
+          PROFIT-FIRST MARKET PREFLIGHT
+                     eligible only
+                            ↓
+             real SPY option candidates
                             ↓
                       AI JUDGMENT
                      TRADE / NO_TRADE
@@ -114,9 +123,9 @@ needed, mirrors the session to the terminal, and writes the complete record to
 
 ```powershell
 python -m lockean_lite.session_launcher `
-  --day-number 18 `
-  --completed-through 2026-09-30 `
-  --expiration 2026-10-02
+  --day-number 19 `
+  --completed-through 2026-10-01 `
+  --expiration 2026-10-09
 ```
 
 The launcher owns the approved profit-first arguments so the terminal command
@@ -138,8 +147,9 @@ Current session controls:
   one; with a one-stop limit, the first stop leaves zero entry capacity
 - the remaining-capacity gate prevents already-authorized concurrent exposure
   from producing more stopped spread units than the configured session limit
-- AI entry evaluations run no more often than every **15 minutes**, with a
-  **30-minute** post-submission cooldown
+- entry eligibility runs no more often than every **15 minutes**; AI is called
+  only after deterministic market eligibility, with a **30-minute**
+  post-submission cooldown
 - no new position may be opened during the final **30 minutes** of the session
 - stop-loss state is rebuilt from tagged closed Alpaca orders after a restart;
   submissions, stale cancellations, and take-profit fills do not count
@@ -147,7 +157,8 @@ Current session controls:
 - temporary Alpaca / AI / market-data failures fail closed for that iteration and reconcile next cycle
 - session continues monitoring even when new entries are blocked
 - completed sessions print opening equity, closing equity, net equity change,
-  broker day P&L, evaluation count, and a positive/flat/negative outcome
+  broker day P&L, evaluation count, broker outcome, and the explicit limitation
+  that operating costs and all-in net P&L are not yet tracked
 
 The runner does not simulate P&L. Orders are submitted to Alpaca paper trading, and subsequent account equity, positions and P&L are read back from Alpaca.
 
@@ -286,7 +297,7 @@ python -m pytest -q
 Current verified engineering seal:
 
 ```text
-363 passed
+369 passed
 0 regressions
 ```
 
