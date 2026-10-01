@@ -69,6 +69,14 @@ The session continues broker reconciliation and managed-position exit checks.
 
 ## Day 18 Mission — October 1, 2026
 
+> **Superseded before execution:** the Founder issued the permanent
+> profitability-first product directive on October 1. Day 18 now runs the
+> profit-first contract documented in
+> `docs/decisions/2026-10-01_profitability-first-product-doctrine.md` and
+> `docs/build_log/2026-10-01_lite-day-18-profit-first-pivot.md`. The
+> remaining-capacity control remains active beneath the tighter one-spread,
+> one-stop policy.
+
 Day 18 is a controlled active-paper validation of the new exposure-aware rule,
 not a strategy-tuning session.
 

@@ -236,6 +236,7 @@ def main(argv=None) -> int:
         choices=(
             "balanced",
             "active_paper",
+            "profit_first",
         ),
         default="active_paper",
     )

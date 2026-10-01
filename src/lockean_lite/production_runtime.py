@@ -12,6 +12,9 @@ from alpaca.data.historical import (
 from lockean_lite.ai_recommendation_provider import (
     StructuredAIRecommendationProvider,
 )
+from lockean_lite.agent_market_context import (
+    build_agent_market_context,
+)
 from lockean_lite.alpaca_account_reader import (
     read_paper_account_snapshot_from_environment,
 )
@@ -52,6 +55,9 @@ from lockean_lite.paper_portfolio_snapshot import (
 )
 from lockean_lite.portfolio_gate import (
     evaluate_session_stop_loss_capacity,
+)
+from lockean_lite.profit_first_entry_policy import (
+    evaluate_profit_first_entry,
 )
 from lockean_lite.safe_error_reporting import (
     safe_exception_reason,
@@ -292,6 +298,14 @@ def run_production_autonomous_cycle(
         Decimal("1")
     )
 
+    profit_first_market_context = None
+    if agent_activity_mode == "profit_first":
+        profit_first_market_context = build_agent_market_context(
+            spy_evidence=spy_evidence,
+            vix_evidence=vix_evidence,
+            intraday_context=intraday_context,
+        )
+
     def candidate_quotes_provider():
         return read_spy_directional_candidate_quotes(
             trading_client=trading_client,
@@ -308,6 +322,14 @@ def run_production_autonomous_cycle(
         )
 
     def proposal_policy_checker(proposal, candidate_quotes):
+        if profit_first_market_context is not None:
+            profit_decision = evaluate_profit_first_entry(
+                proposal=proposal,
+                market_context=profit_first_market_context,
+            )
+            if not profit_decision.allowed:
+                return profit_decision
+
         portfolio_snapshot = read_live_paper_portfolio_snapshot(
             trading_client=trading_client,
         )
