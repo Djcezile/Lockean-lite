@@ -153,6 +153,49 @@ def test_no_trade_does_not_start_entry_cooldown():
     assert summary.trade_cycles == 3
 
 
+def test_completed_session_failure_latches_while_risk_checks_continue():
+    exit_calls = []
+    cycle_calls = []
+    outputs = []
+
+    def cycle_runner():
+        cycle_calls.append("cycle")
+        return SimpleNamespace(
+            status="NO_TRADE",
+            reason="profit_first_momentum_not_confirmed",
+            execution_proof=None,
+            diagnostics=(),
+            ai_inference_requests=0,
+        )
+
+    summary = run_autonomous_paper_session(
+        clock_provider=_open_clock,
+        portfolio_provider=_portfolio,
+        cycle_runner=cycle_runner,
+        exit_runner=lambda snapshot: (
+            exit_calls.append("exit")
+            or _exit_result()
+        ),
+        interval_seconds=60,
+        risk_check_interval_seconds=30,
+        sleep_fn=lambda seconds: None,
+        output_fn=outputs.append,
+        max_iterations=5,
+    )
+
+    assert len(exit_calls) == 5
+    assert len(cycle_calls) == 1
+    assert summary.trade_cycles == 1
+    assert any(
+        line.startswith("SESSION ENTRY ELIGIBILITY: CLOSED")
+        for line in outputs
+    )
+    assert any(
+        line.startswith("SESSION ENTRY GATE: BLOCKED")
+        for line in outputs
+    )
+
+
 def test_risk_check_interval_must_be_positive():
     with pytest.raises(
         ValueError,

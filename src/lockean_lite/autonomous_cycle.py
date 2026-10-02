@@ -23,6 +23,7 @@ class AutonomousTradeCycleResult:
     reason: str
     execution_proof: ExecutionProof | None = None
     diagnostics: tuple[str, ...] = ()
+    ai_inference_requests: int = 0
 
 
 def _agent_diagnostics(
@@ -122,10 +123,19 @@ def run_autonomous_trade_cycle(
         candidate_quotes_provider()
     )
 
-    recommendation = recommendation_provider(
-        candidate_quotes,
-        market_context=market_context,
-    )
+    try:
+        recommendation = recommendation_provider(
+            candidate_quotes,
+            market_context=market_context,
+        )
+    except Exception as error:
+        # Preserve the cost/accounting fact for the session even when the
+        # external inference request fails before returning a decision.
+        try:
+            setattr(error, "ai_inference_requests", 1)
+        except Exception:
+            pass
+        raise
 
     diagnostics = _agent_diagnostics(
         recommendation_provider=recommendation_provider,
@@ -138,6 +148,7 @@ def run_autonomous_trade_cycle(
             status="NO_TRADE",
             reason="agent_declined_trade",
             diagnostics=diagnostics,
+            ai_inference_requests=1,
         )
 
     # Session portfolio capacity is counted in spread units. One autonomous
@@ -148,6 +159,7 @@ def run_autonomous_trade_cycle(
             status="REJECTED",
             reason="autonomous_contract_quantity_must_be_one",
             diagnostics=diagnostics,
+            ai_inference_requests=1,
         )
 
     try:
@@ -162,6 +174,7 @@ def run_autonomous_trade_cycle(
             status="REJECTED",
             reason=str(error),
             diagnostics=diagnostics,
+            ai_inference_requests=1,
         )
 
     if proposal_policy_checker is not None:
@@ -175,6 +188,7 @@ def run_autonomous_trade_cycle(
                 status="REJECTED",
                 reason=policy_decision.reason,
                 diagnostics=diagnostics,
+                ai_inference_requests=1,
             )
 
     evidence_validation_result = (
@@ -190,6 +204,7 @@ def run_autonomous_trade_cycle(
             status="REJECTED",
             reason=evidence_validation_result.reason,
             diagnostics=diagnostics,
+            ai_inference_requests=1,
         )
 
     account_snapshot = (
@@ -213,4 +228,5 @@ def run_autonomous_trade_cycle(
             cycle_result.execution_proof
         ),
         diagnostics=diagnostics,
+        ai_inference_requests=1,
     )

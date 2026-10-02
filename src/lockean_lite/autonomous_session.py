@@ -58,6 +58,15 @@ _ENTRY_EVIDENCE_WAIT_REASONS = frozenset(
     }
 )
 
+_IMMUTABLE_SESSION_ENTRY_REASONS = frozenset(
+    {
+        "profit_first_trend_not_confirmed",
+        "profit_first_momentum_not_confirmed",
+        "profit_first_breakout_not_confirmed",
+        "profit_first_volatility_not_confirmed",
+    }
+)
+
 
 @dataclass(frozen=True)
 class AutonomousSessionSummary:
@@ -241,8 +250,10 @@ def run_autonomous_paper_session(
 
     iterations = 0
     trade_cycles = 0
+    ai_inference_requests = 0
     last_status = "WAITING"
     last_reason = "session_not_started"
+    session_entry_ineligible_reason = None
     market_has_opened = False
     opening_equity = None
 
@@ -258,7 +269,7 @@ def run_autonomous_paper_session(
     output_fn("MODE: ALPACA PAPER ONLY")
     output_fn(f"MAX MANAGED SPREAD UNITS: {maximum_open_spreads}")
     output_fn(f"DAILY LOSS HALT: -${maximum_daily_loss:.2f}")
-    output_fn(f"AI ENTRY CADENCE: {interval_seconds} seconds")
+    output_fn(f"ENTRY EVALUATION CADENCE: {interval_seconds} seconds")
     output_fn(
         "POSITION RISK CADENCE: "
         f"{risk_check_interval_seconds} seconds"
@@ -330,6 +341,7 @@ def run_autonomous_paper_session(
                     closing_equity=snapshot.equity,
                     broker_day_pl=snapshot.day_pl,
                     entry_evaluations=trade_cycles,
+                    ai_inference_requests=ai_inference_requests,
                 )
                 output_fn("")
                 output_fn(
@@ -785,7 +797,16 @@ def run_autonomous_paper_session(
         entry_due = elapsed_seconds >= next_entry_check_at
         cooldown_active = elapsed_seconds < entry_cooldown_until
 
-        if entry_due and cooldown_active:
+        if entry_due and session_entry_ineligible_reason is not None:
+            last_status = "ENTRY_BLOCKED"
+            last_reason = session_entry_ineligible_reason
+            output_fn(
+                "SESSION ENTRY GATE: BLOCKED | "
+                f"{session_entry_ineligible_reason} | "
+                "immutable_completed_session_evidence"
+            )
+            next_entry_check_at = elapsed_seconds + interval_seconds
+        elif entry_due and cooldown_active:
             remaining = max(0, int(entry_cooldown_until - elapsed_seconds))
             last_status = "ENTRY_COOLDOWN"
             last_reason = "post_submission_entry_cooldown"
@@ -824,6 +845,9 @@ def run_autonomous_paper_session(
                             loss_loop_state=loss_loop_state
                         )
                 except Exception as error:
+                    ai_inference_requests += int(
+                        getattr(error, "ai_inference_requests", 0)
+                    )
                     last_reason = safe_exception_reason(error)
                     if (
                         isinstance(error, ValueError)
@@ -848,6 +872,9 @@ def run_autonomous_paper_session(
                             "FAIL CLOSED: reconcile Alpaca state on next iteration"
                         )
                 else:
+                    ai_inference_requests += int(
+                        getattr(cycle_result, "ai_inference_requests", 0)
+                    )
                     last_status = cycle_result.status
                     last_reason = cycle_result.reason
                     output_fn(
@@ -856,6 +883,16 @@ def run_autonomous_paper_session(
                     )
                     for diagnostic in getattr(cycle_result, "diagnostics", ()):
                         output_fn(f"AUTONOMOUS DIAGNOSTIC: {diagnostic}")
+                    if (
+                        cycle_result.reason
+                        in _IMMUTABLE_SESSION_ENTRY_REASONS
+                    ):
+                        session_entry_ineligible_reason = cycle_result.reason
+                        output_fn(
+                            "SESSION ENTRY ELIGIBILITY: CLOSED | "
+                            f"{cycle_result.reason} | completed-session "
+                            "evidence cannot change during this run"
+                        )
                     execution_proof = getattr(
                         cycle_result,
                         "execution_proof",
@@ -1145,7 +1182,7 @@ def main(argv=None) -> int:
         f"TP_CONCESSION=${args.take_profit_price_concession} | "
         f"SAME_STRUCTURE_CAP={args.maximum_same_structure_units} | "
         f"ACTIVITY_MODE={args.activity_mode} | "
-        f"AI_CADENCE={args.interval_seconds}s | "
+        f"ENTRY_EVALUATION_CADENCE={args.interval_seconds}s | "
         f"RISK_CADENCE={args.risk_check_interval_seconds}s | "
         f"ENTRY_COOLDOWN={args.entry_cooldown_seconds}s | "
         "LOSS_LOOP_DIRECTION_COOLDOWN="

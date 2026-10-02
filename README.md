@@ -123,8 +123,8 @@ needed, mirrors the session to the terminal, and writes the complete record to
 
 ```powershell
 python -m lockean_lite.session_launcher `
-  --day-number 19 `
-  --completed-through 2026-10-01 `
+  --day-number 20 `
+  --completed-through 2026-10-02 `
   --expiration 2026-10-09
 ```
 
@@ -150,6 +150,11 @@ Current session controls:
 - entry eligibility runs no more often than every **15 minutes**; AI is called
   only after deterministic market eligibility, with a **30-minute**
   post-submission cooldown
+- a failed completed-session trend, momentum, breakout, or volatility check is
+  latched for the run because that evidence cannot change intraday; 30-second
+  portfolio, pending-order, and exit monitoring continues
+- the closing scorecard reports AI inference requests separately from entry
+  evaluations so avoidable operating work remains visible
 - no new position may be opened during the final **30 minutes** of the session
 - stop-loss state is rebuilt from tagged closed Alpaca orders after a restart;
   submissions, stale cancellations, and take-profit fills do not count
@@ -297,7 +302,7 @@ python -m pytest -q
 Current verified engineering seal:
 
 ```text
-369 passed
+371 passed
 0 regressions
 ```
 

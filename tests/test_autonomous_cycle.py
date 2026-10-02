@@ -10,6 +10,7 @@ from lockean_lite.market_evidence import (
     MarketEvidence,
 )
 from decimal import Decimal
+import pytest
 
 from lockean_lite.application_workflow import (
     TradeDecisionCycleResult,
@@ -507,6 +508,7 @@ def test_autonomous_cycle_allows_agent_to_choose_no_trade(
 
     assert result.status == "NO_TRADE"
     assert result.reason == "agent_declined_trade"
+    assert result.ai_inference_requests == 1
 
     assert account_calls == []
     assert workflow_calls == []
@@ -545,6 +547,7 @@ def test_autonomous_cycle_market_preflight_skips_quotes_and_ai_when_ineligible()
 
     assert result.status == "NO_TRADE"
     assert result.reason == "profit_first_momentum_not_confirmed"
+    assert result.ai_inference_requests == 0
     assert candidate_calls == []
     assert recommendation_calls == []
     assert account_calls == []
@@ -553,6 +556,26 @@ def test_autonomous_cycle_market_preflight_skips_quotes_and_ai_when_ineligible()
         "market_preflight=BLOCKED;"
         "reason=profit_first_momentum_not_confirmed"
     ) in result.diagnostics
+
+
+def test_autonomous_cycle_marks_failed_ai_request_for_session_accounting():
+    spy_evidence, vix_evidence = _agent_market_evidence()
+
+    def failing_recommendation_provider(candidates, *, market_context):
+        raise RuntimeError("provider_unavailable")
+
+    with pytest.raises(RuntimeError) as raised:
+        run_autonomous_trade_cycle(
+            spy_evidence=spy_evidence,
+            vix_evidence=vix_evidence,
+            candidate_quotes_provider=_candidate_quotes,
+            recommendation_provider=failing_recommendation_provider,
+            account_snapshot_provider=_account,
+            authority=object(),
+            execution_gateway=object(),
+        )
+
+    assert raised.value.ai_inference_requests == 1
 
 
 def test_autonomous_cycle_uses_shared_agent_market_context_builder(
