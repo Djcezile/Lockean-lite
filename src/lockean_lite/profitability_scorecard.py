@@ -9,6 +9,7 @@ class ProfitabilityScorecard:
     equity_change: Decimal
     broker_day_pl: Decimal
     entry_evaluations: int
+    ai_inference_requests: int
     outcome: str
     broker_profitable: bool
     all_in_net_pl: Decimal | None
@@ -21,12 +22,17 @@ def build_profitability_scorecard(
     closing_equity: Decimal,
     broker_day_pl: Decimal,
     entry_evaluations: int,
+    ai_inference_requests: int = 0,
 ) -> ProfitabilityScorecard:
     if opening_equity <= 0 or closing_equity < 0:
         raise ValueError("profitability_equity_invalid")
     if entry_evaluations < 0:
         raise ValueError(
             "profitability_entry_evaluations_must_be_non_negative"
+        )
+    if ai_inference_requests < 0:
+        raise ValueError(
+            "profitability_ai_inference_requests_must_be_non_negative"
         )
 
     equity_change = closing_equity - opening_equity
@@ -44,6 +50,7 @@ def build_profitability_scorecard(
         equity_change=equity_change,
         broker_day_pl=broker_day_pl,
         entry_evaluations=entry_evaluations,
+        ai_inference_requests=ai_inference_requests,
         outcome=outcome,
         broker_profitable=broker_day_pl > 0,
         all_in_net_pl=None,
@@ -68,6 +75,7 @@ def render_profitability_scorecard(
             f"NET EQUITY CHANGE: {_money(scorecard.equity_change)}",
             f"BROKER DAY P&L: {_money(scorecard.broker_day_pl)}",
             f"ENTRY EVALUATIONS: {scorecard.entry_evaluations}",
+            f"AI INFERENCE REQUESTS: {scorecard.ai_inference_requests}",
             f"BROKER OUTCOME: {scorecard.outcome}",
             "OPERATING COSTS: NOT TRACKED",
             "ALL-IN NET P&L: UNKNOWN",

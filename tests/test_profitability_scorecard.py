@@ -12,6 +12,7 @@ def test_scorecard_uses_broker_money_results_as_the_outcome():
         closing_equity=Decimal("99425.37"),
         broker_day_pl=Decimal("25.30"),
         entry_evaluations=8,
+        ai_inference_requests=3,
     )
 
     assert scorecard.equity_change == Decimal("25.30")
@@ -25,6 +26,7 @@ def test_scorecard_uses_broker_money_results_as_the_outcome():
     assert "PROFITABILITY SCORECARD" in rendered
     assert "NET EQUITY CHANGE: $25.30" in rendered
     assert "BROKER DAY P&L: $25.30" in rendered
+    assert "AI INFERENCE REQUESTS: 3" in rendered
     assert "SCOPE: BROKER ACCOUNT ONLY" in rendered
     assert "BROKER OUTCOME: POSITIVE" in rendered
     assert "OPERATING COSTS: NOT TRACKED" in rendered

@@ -142,6 +142,7 @@ def test_completed_session_prints_profitability_scorecard():
             status="NO_TRADE",
             reason="agent_declined_trade",
             execution_proof=None,
+            ai_inference_requests=1,
         ),
         interval_seconds=1,
         sleep_fn=lambda seconds: None,
@@ -152,6 +153,7 @@ def test_completed_session_prints_profitability_scorecard():
     assert any("PROFITABILITY SCORECARD" in line for line in output)
     assert any("NET EQUITY CHANGE: $25.30" in line for line in output)
     assert any("BROKER DAY P&L: $25.30" in line for line in output)
+    assert any("AI INFERENCE REQUESTS: 1" in line for line in output)
     assert any("BROKER OUTCOME: POSITIVE" in line for line in output)
     assert any("ALL-IN NET P&L: UNKNOWN" in line for line in output)
 
