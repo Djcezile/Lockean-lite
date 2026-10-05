@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -123,6 +124,33 @@ def test_session_waits_when_market_is_closed_without_running_agent():
     assert cycle_calls == []
     assert sleeps == [60]
     assert summary.last_reason == "market_closed_waiting_for_open"
+
+
+def test_session_logs_utc_heartbeat_while_waiting_for_market_open():
+    output = []
+
+    run_autonomous_paper_session(
+        clock_provider=_closed_clock,
+        portfolio_provider=lambda: _portfolio(),
+        cycle_runner=lambda: None,
+        interval_seconds=300,
+        now_fn=lambda: datetime(
+            2026,
+            10,
+            5,
+            9,
+            15,
+            tzinfo=timezone.utc,
+        ),
+        sleep_fn=lambda seconds: None,
+        output_fn=output.append,
+        max_iterations=1,
+    )
+
+    assert (
+        "SESSION HEARTBEAT: iteration=1 | "
+        "observed_at=2026-10-05T09:15:00+00:00"
+    ) in output
 
 
 def test_completed_session_prints_profitability_scorecard():

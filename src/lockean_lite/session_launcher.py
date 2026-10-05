@@ -6,6 +6,7 @@ import sys
 from typing import Callable, TextIO
 
 from lockean_lite import autonomous_session
+from lockean_lite.safe_error_reporting import safe_exception_reason
 
 
 class _TeeTextIO:
@@ -111,8 +112,35 @@ def run_logged_session(
     with log_path.open("w", encoding="utf-8", buffering=1) as log_file:
         tee = _TeeTextIO(console, log_file)
         print(f"SESSION LOG FILE: {log_path}", file=tee)
+        print(f"SESSION RUN STARTED AT: {now.isoformat()}", file=tee)
+        print(
+            "SESSION RUN PARAMETERS: "
+            f"day={day_number} | "
+            f"completed_through={completed_through.isoformat()} | "
+            f"expiration={expiration.isoformat()}",
+            file=tee,
+        )
         with redirect_stdout(tee), redirect_stderr(tee):
-            exit_code = session_main(arguments)
+            try:
+                exit_code = session_main(arguments)
+            except KeyboardInterrupt:
+                print(
+                    "SESSION RUN RESULT: INTERRUPTED | "
+                    "KeyboardInterrupt | operator_interrupt"
+                )
+                exit_code = 130
+            except Exception as error:
+                print(
+                    "SESSION RUN RESULT: ABORTED | "
+                    f"{type(error).__name__} | "
+                    f"{safe_exception_reason(error)}"
+                )
+                exit_code = 1
+            else:
+                result = "COMPLETE" if exit_code == 0 else "FAILED"
+                print(
+                    f"SESSION RUN RESULT: {result} | exit_code={exit_code}"
+                )
 
     return exit_code, log_path
 
@@ -150,7 +178,7 @@ def main(argv=None) -> int:
         day_number=args.day_number,
         completed_through=args.completed_through,
         expiration=args.expiration,
-        now=datetime.now(),
+        now=datetime.now().astimezone(),
     )
     return exit_code
 

@@ -96,3 +96,36 @@ def test_run_logged_session_creates_logs_directory_and_tees_console_output(
     )
     assert "LOCKEAN TEST SESSION" in console.getvalue()
     assert "LOCKEAN TEST SESSION" in log_path.read_text(encoding="utf-8")
+    assert "SESSION RUN STARTED AT: 2026-10-01T13:30:45+00:00" in (
+        log_path.read_text(encoding="utf-8")
+    )
+    assert "SESSION RUN RESULT: COMPLETE | exit_code=0" in (
+        log_path.read_text(encoding="utf-8")
+    )
+
+
+def test_run_logged_session_records_sanitized_fatal_error(tmp_path):
+    console = StringIO()
+
+    def failing_session_main(arguments):
+        raise RuntimeError("credential-value-must-not-appear")
+
+    exit_code, log_path = run_logged_session(
+        repo_root=tmp_path,
+        day_number=20,
+        completed_through=date(2026, 10, 2),
+        expiration=date(2026, 10, 9),
+        now=datetime(2026, 10, 5, 19, 26, 2, tzinfo=timezone.utc),
+        session_main=failing_session_main,
+        console=console,
+    )
+
+    log_text = log_path.read_text(encoding="utf-8")
+
+    assert exit_code == 1
+    assert (
+        "SESSION RUN RESULT: ABORTED | RuntimeError | unexpected_error"
+        in log_text
+    )
+    assert "credential-value-must-not-appear" not in log_text
+    assert "SESSION RUN RESULT: ABORTED" in console.getvalue()

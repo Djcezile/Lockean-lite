@@ -295,6 +295,16 @@ def run_autonomous_paper_session(
 
     while True:
         iterations += 1
+        current_time = now_fn() if now_fn is not None else datetime.now(
+            timezone.utc
+        )
+        current_time = _normalize_datetime(current_time)
+        output_fn("")
+        output_fn(
+            "SESSION HEARTBEAT: "
+            f"iteration={iterations} | "
+            f"observed_at={current_time.isoformat()}"
+        )
 
         try:
             clock = clock_provider()
@@ -320,7 +330,6 @@ def run_autonomous_paper_session(
             elapsed_seconds += wait_seconds
             continue
 
-        output_fn("")
         output_fn(render_paper_portfolio_snapshot(snapshot))
         output_fn("")
         output_fn(
@@ -370,7 +379,6 @@ def run_autonomous_paper_session(
             continue
 
         market_has_opened = True
-        current_time = now_fn() if now_fn is not None else datetime.now(timezone.utc)
         seconds_to_close = _seconds_until_market_close(
             clock=clock,
             now=current_time,

@@ -118,13 +118,13 @@ The dashboard reads Alpaca account state, positions, orders, P&L and clock. It d
 
 Lockean Lite now runs continuously from one command against the linked Alpaca
 paper account. The launcher creates the repository `logs` directory when
-needed, mirrors the session to the terminal, and writes the complete record to
-`logs/lockean_lite_DAY<N>_<timestamp>.log`.
+needed, mirrors the session to the terminal, and writes a line-buffered record
+to `logs/lockean_lite_DAY<N>_<timestamp>.log`.
 
 ```powershell
 python -m lockean_lite.session_launcher `
-  --day-number 20 `
-  --completed-through 2026-10-02 `
+  --day-number 21 `
+  --completed-through 2026-10-05 `
   --expiration 2026-10-09
 ```
 
@@ -155,6 +155,11 @@ Current session controls:
   portfolio, pending-order, and exit monitoring continues
 - the closing scorecard reports AI inference requests separately from entry
   evaluations so avoidable operating work remains visible
+- every loop emits a UTC heartbeat so an interrupted run has a defensible
+  last-known observation time
+- each log records run parameters and a terminal completion, interruption, or
+  sanitized fatal-error marker; absence of that marker identifies abrupt host
+  or process loss
 - no new position may be opened during the final **30 minutes** of the session
 - stop-loss state is rebuilt from tagged closed Alpaca orders after a restart;
   submissions, stale cancellations, and take-profit fills do not count
@@ -302,7 +307,7 @@ python -m pytest -q
 Current verified engineering seal:
 
 ```text
-371 passed
+373 passed
 0 regressions
 ```
 
