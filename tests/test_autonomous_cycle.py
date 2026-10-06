@@ -240,11 +240,20 @@ def test_autonomous_cycle_passes_real_market_signal_context_to_agent(
     )
 
     assert captured["market_context"] == {
+        "spy_completed_through": "2026-07-19",
         "spy_close": "765",
+        "spy_sma_50": "760.100",
+        "spy_sma_200": "715.025",
+        "spy_rsi_14": "100.000",
+        "spy_previous_20_session_high": "770.000",
+        "spy_breakout_distance_pct": "-0.649",
         "trend": "PASS",
         "momentum": "FAIL",
         "breakout": "FAIL",
+        "vix_completed_through": "2026-07-19",
         "vix_close": "15.20",
+        "vix_sma_20": "15.200",
+        "vix_distance_from_sma_20_pct": "0.000",
         "volatility": "FAIL",
     }
 

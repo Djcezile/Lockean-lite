@@ -1,12 +1,48 @@
-from decimal import Decimal
 from dataclasses import dataclass
+from decimal import Decimal
 
 from lockean_lite.market_evidence import MarketEvidence
+
 
 @dataclass(frozen=True)
 class MarketEntryEvaluation:
     passed: bool
     reason: str
+
+
+def simple_moving_average(
+    evidence: MarketEvidence,
+    periods: int,
+) -> Decimal | None:
+    if periods <= 0:
+        raise ValueError("moving_average_periods_must_be_positive")
+
+    closes = tuple(bar.close for bar in evidence.bars)
+
+    if len(closes) < periods:
+        return None
+
+    return (
+        sum(closes[-periods:], start=Decimal("0"))
+        / Decimal(periods)
+    )
+
+
+def previous_session_high(
+    evidence: MarketEvidence,
+    sessions: int,
+) -> Decimal | None:
+    if sessions <= 0:
+        raise ValueError("previous_high_sessions_must_be_positive")
+
+    if len(evidence.bars) < sessions + 1:
+        return None
+
+    return max(
+        bar.high
+        for bar in evidence.bars[-(sessions + 1):-1]
+    )
+
 
 def evaluate_market_entry_policy(
     spy_evidence: MarketEvidence,
@@ -50,20 +86,13 @@ def bullish_trend_filter_passes(
         for bar in evidence.bars
     )
 
-    if len(closes) < 200:
+    sma_50 = simple_moving_average(evidence, 50)
+    sma_200 = simple_moving_average(evidence, 200)
+
+    if sma_50 is None or sma_200 is None:
         return False
 
     latest_close = closes[-1]
-
-    sma_50 = sum(
-        closes[-50:],
-        start=Decimal("0"),
-    ) / Decimal("50")
-
-    sma_200 = sum(
-        closes[-200:],
-        start=Decimal("0"),
-    ) / Decimal("200")
 
     return (
         latest_close > sma_50
@@ -71,7 +100,7 @@ def bullish_trend_filter_passes(
     )
 
 
-def _calculate_rsi_14(
+def calculate_rsi_14(
     evidence: MarketEvidence,
 ) -> Decimal | None:
     closes = tuple(
@@ -135,7 +164,7 @@ def _calculate_rsi_14(
 def momentum_filter_passes(
     evidence: MarketEvidence,
 ) -> bool:
-    rsi_14 = _calculate_rsi_14(evidence)
+    rsi_14 = calculate_rsi_14(evidence)
 
     if rsi_14 is None:
         return False
@@ -149,17 +178,14 @@ def momentum_filter_passes(
 def breakout_filter_passes(
     evidence: MarketEvidence,
 ) -> bool:
-    bars = evidence.bars
-
-    if len(bars) < 21:
+    previous_20_session_high = previous_session_high(
+        evidence,
+        20,
+    )
+    if previous_20_session_high is None:
         return False
 
-    latest_close = bars[-1].close
-
-    previous_20_session_high = max(
-        bar.high
-        for bar in bars[-21:-1]
-    )
+    latest_close = evidence.bars[-1].close
 
     return latest_close > previous_20_session_high
 
@@ -167,17 +193,8 @@ def breakout_filter_passes(
 def volatility_filter_passes(
     evidence: MarketEvidence,
 ) -> bool:
-    closes = tuple(
-        bar.close
-        for bar in evidence.bars
-    )
-
-    if len(closes) < 20:
+    vix_sma_20 = simple_moving_average(evidence, 20)
+    if vix_sma_20 is None:
         return False
 
-    vix_sma_20 = sum(
-        closes[-20:],
-        start=Decimal("0"),
-    ) / Decimal("20")
-
-    return closes[-1] < vix_sma_20
+    return evidence.bars[-1].close < vix_sma_20
