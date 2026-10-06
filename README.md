@@ -123,8 +123,8 @@ to `logs/lockean_lite_DAY<N>_<timestamp>.log`.
 
 ```powershell
 python -m lockean_lite.session_launcher `
-  --day-number 21 `
-  --completed-through 2026-10-05 `
+  --day-number 22 `
+  --completed-through 2026-10-06 `
   --expiration 2026-10-09
 ```
 
@@ -153,6 +153,9 @@ Current session controls:
 - a failed completed-session trend, momentum, breakout, or volatility check is
   latched for the run because that evidence cannot change intraday; 30-second
   portfolio, pending-order, and exit monitoring continues
+- each completed-session gate records its numeric research basis: SPY 50- and
+  200-session averages, RSI-14, prior 20-session high and breakout distance,
+  plus the VIX 20-session average and distance
 - the closing scorecard reports AI inference requests separately from entry
   evaluations so avoidable operating work remains visible
 - every loop emits a UTC heartbeat so an interrupted run has a defensible
@@ -307,7 +310,7 @@ python -m pytest -q
 Current verified engineering seal:
 
 ```text
-373 passed
+374 passed
 0 regressions
 ```
 
