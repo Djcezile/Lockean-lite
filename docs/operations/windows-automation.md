@@ -121,7 +121,7 @@ For mobile push without Slack or Google Workspace, install the
 & "$env:LOCALAPPDATA\LockeanLite\Automation\bin\Set-LockeanLitePush.ps1"
 ```
 
-The script generates a 256-bit random private topic, saves only its HTTPS
+The script generates a 128-bit random private topic, saves only its HTTPS
 endpoint as a user-DPAPI-protected `SecureString`, displays the topic, and
 copies it to the Windows clipboard. In the ntfy app, tap `+` and subscribe to
 that exact topic on the default `https://ntfy.sh` server. Do this before the
@@ -129,7 +129,7 @@ verification command because verification sends a real labelled test alert.
 
 The topic is a bearer secret. ntfy topics are created on demand and anyone who
 knows a topic can subscribe or publish, so never put it in Git, chat, a
-screenshot, a public note, or an ordinary log. The 256-bit generated suffix
+screenshot, a public note, or an ordinary log. The 128-bit generated suffix
 makes accidental guessing impractical. The notifier also refuses weak or
 ambiguous `ntfy.sh` URLs.
 

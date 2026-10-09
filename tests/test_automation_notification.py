@@ -110,6 +110,7 @@ def test_notification_posts_plain_text_to_private_ntfy_topic():
         "https://ntfy.sh/guessable",
         "https://ntfy.sh/lockean-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?token=leak",
         "https://ntfy.sh/lockean-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/extra",
+        "https://ntfy.sh/" + ("a" * 65),
     ],
 )
 def test_notification_rejects_weak_or_ambiguous_ntfy_destination(destination):

@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 
 _EVENT_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_NTFY_TOPIC_PATH = re.compile(r"^/[A-Za-z0-9_-]{32,128}$")
+_NTFY_TOPIC_PATH = re.compile(r"^/[A-Za-z0-9_-]{32,64}$")
 
 
 class NotificationError(Exception):

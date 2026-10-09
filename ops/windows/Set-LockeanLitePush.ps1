@@ -4,7 +4,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$entropy = New-Object byte[] 32
+$entropy = New-Object byte[] 16
 $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
 try {
     $generator.GetBytes($entropy)

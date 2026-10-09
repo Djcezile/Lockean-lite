@@ -19,15 +19,15 @@ the immediate goal: a visible lifecycle alert on the operator's phone.
 
 Use the hosted `ntfy.sh` service for the first mobile-push destination:
 
-1. `Set-LockeanLitePush.ps1` creates 32 bytes (256 bits) with the platform
+1. `Set-LockeanLitePush.ps1` creates 16 bytes (128 bits) with the platform
    cryptographic random-number generator.
-2. The bytes form a private topic named `lockean-<64 lowercase hex digits>`.
+2. The bytes form a private topic named `lockean-<32 lowercase hex digits>`.
 3. The full HTTPS destination is converted to a `SecureString` and exported
    with current-user Windows DPAPI to the existing notification secret path.
 4. The topic is shown once and copied to the Windows clipboard so the operator
    can subscribe in the ntfy mobile app.
 5. `notification.py` recognizes only an exact `ntfy.sh` host with one topic
-   path of at least 32 safe characters and no port, credentials, query, or
+   path of 32–64 safe characters and no port, credentials, query, or
    fragment. It sends the fixed sanitized alert as UTF-8 text with a static
    title and high priority.
 6. Other HTTPS webhook destinations keep the existing JSON `text` payload.
@@ -42,7 +42,7 @@ topic can publish or subscribe:
 ## Security boundary
 
 The random topic is a bearer secret, not an authenticated private mailbox. Its
-256-bit random suffix provides confidentiality through unguessability; it must
+128-bit random suffix provides confidentiality through unguessability; it must
 not be committed, logged, screenshotted, or pasted into chat. The destination
 is protected at rest by the same user-scoped DPAPI boundary as the original
 webhook configuration. Transport errors expose only stable local error codes.
