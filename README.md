@@ -175,6 +175,29 @@ Current session controls:
 
 The runner does not simulate P&L. Orders are submitted to Alpaca paper trading, and subsequent account equity, positions and P&L are read back from Alpaca.
 
+### Scheduled Windows paper sessions
+
+The repository now contains the scheduler sources under `ops/windows` and the
+read-only planning/watchdog code under `lockean_lite.automation`. Deployment is
+staged and commit-pinned: the installer will not replace the working scheduled
+task until the exact commit passes the full regression suite, a broker-planning
+dry run, simulated alert rendering, and a real notification delivery test.
+
+The 09:15 ET daily task writes complete trading logs to this repository's
+`logs` subfolder. A separate 09:20 ET watchdog uses Alpaca calendar hours to
+handle holidays and early closes, detects missing/stale lifecycle evidence,
+and sends idempotent sanitized alerts through a user-DPAPI-protected HTTPS
+endpoint. Neither task pulls Git or retries a broker-capable session.
+
+- [Windows deployment and operations runbook](docs/operations/windows-automation.md)
+- [Pinned automation decision](docs/decisions/2026-10-09_pinned-unattended-automation.md)
+- [Day 23 unattended-session audit](docs/build_log/2026-10-09_lite-day-23-unattended-automation.md)
+
+Day 23 proved one full scheduled process cycle, not profitability: it finished
+flat at `$0.00` day P&L, made no order, and left all-in P&L unknown. The four
+valid full `profit_first` sessions through Day 23 produced zero eligible setups
+and zero trades. The strategy remains experimental.
+
 ---
 
 ## Final Hackathon Proof
@@ -310,7 +333,7 @@ python -m pytest -q
 Current verified engineering seal:
 
 ```text
-374 passed
+403 passed
 0 regressions
 ```
 

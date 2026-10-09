@@ -95,3 +95,58 @@ def test_intraday_context_reports_warming_up_without_inventing_missing_horizons(
     assert result["intraday_return_30m_pct"] == "NA"
     assert result["intraday_direction_5m"] == "NA"
     assert result["intraday_return_lookback_pct"] == "2.000"
+
+
+def test_opening_minute_without_a_completed_bar_is_explicitly_warming_up():
+    now = datetime(
+        2026,
+        10,
+        9,
+        13,
+        30,
+        43,
+        tzinfo=timezone.utc,
+    )
+
+    result = read_spy_intraday_context(
+        client=FakeStockClient(()),
+        now=now,
+    )
+
+    assert result == {
+        "intraday_status": "WARMING_UP",
+        "intraday_source": "alpaca_iex_minute",
+        "intraday_reason": "opening_bar_pending",
+        "intraday_as_of": "NA",
+        "intraday_bar_count": "0",
+        "intraday_spy_close": "NA",
+        "intraday_return_lookback_pct": "NA",
+        "intraday_return_5m_pct": "NA",
+        "intraday_return_15m_pct": "NA",
+        "intraday_return_30m_pct": "NA",
+        "intraday_direction_5m": "NA",
+        "intraday_direction_15m": "NA",
+        "intraday_direction_30m": "NA",
+    }
+
+
+def test_missing_bars_after_opening_minute_remain_unavailable():
+    now = datetime(
+        2026,
+        10,
+        9,
+        13,
+        31,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    try:
+        read_spy_intraday_context(
+            client=FakeStockClient(()),
+            now=now,
+        )
+    except ValueError as error:
+        assert str(error) == "intraday_spy_bars_unavailable"
+    else:
+        raise AssertionError("missing post-opening bars must fail closed")

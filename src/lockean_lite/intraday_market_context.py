@@ -83,6 +83,25 @@ def read_spy_intraday_context(
     bars = tuple(bars)
 
     if not bars:
+        local_time = current_time.astimezone(NEW_YORK).time().replace(
+            tzinfo=None
+        )
+        if REGULAR_SESSION_OPEN <= local_time < time(9, 31):
+            return {
+                "intraday_status": "WARMING_UP",
+                "intraday_source": "alpaca_iex_minute",
+                "intraday_reason": "opening_bar_pending",
+                "intraday_as_of": "NA",
+                "intraday_bar_count": "0",
+                "intraday_spy_close": "NA",
+                "intraday_return_lookback_pct": "NA",
+                "intraday_return_5m_pct": "NA",
+                "intraday_return_15m_pct": "NA",
+                "intraday_return_30m_pct": "NA",
+                "intraday_direction_5m": "NA",
+                "intraday_direction_15m": "NA",
+                "intraday_direction_30m": "NA",
+            }
         raise ValueError("intraday_spy_bars_unavailable")
 
     closes = tuple(

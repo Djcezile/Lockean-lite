@@ -1,12 +1,57 @@
 import argparse
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+import re
+import subprocess
 import sys
 from typing import Callable, TextIO
 
 from lockean_lite import autonomous_session
 from lockean_lite.safe_error_reporting import safe_exception_reason
+
+
+_GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+
+
+@dataclass(frozen=True)
+class SourceState:
+    git_commit: str
+    worktree: str
+
+
+def read_source_state(repo_root: Path) -> SourceState:
+    """Read source provenance without ever rendering Git error output."""
+    try:
+        commit_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        commit = commit_result.stdout.strip().lower()
+        if _GIT_COMMIT_PATTERN.fullmatch(commit) is None:
+            raise ValueError("git_commit_invalid")
+
+        status_result = subprocess.run(
+            [
+                "git",
+                "status",
+                "--porcelain",
+            ],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        worktree = "dirty" if status_result.stdout.strip() else "clean"
+        return SourceState(git_commit=commit, worktree=worktree)
+    except Exception:
+        return SourceState(git_commit="unavailable", worktree="unavailable")
 
 
 class _TeeTextIO:
@@ -94,6 +139,8 @@ def run_logged_session(
     now: datetime,
     session_main: Callable[[list[str]], int] = autonomous_session.main,
     console: TextIO | None = None,
+    approved_commit: str | None = None,
+    source_state_provider: Callable[[Path], SourceState] = read_source_state,
 ) -> tuple[int, Path]:
     if console is None:
         console = sys.stdout
@@ -108,6 +155,7 @@ def run_logged_session(
         completed_through=completed_through,
         expiration=expiration,
     )
+    source_state = source_state_provider(Path(repo_root))
 
     with log_path.open("w", encoding="utf-8", buffering=1) as log_file:
         tee = _TeeTextIO(console, log_file)
@@ -120,6 +168,23 @@ def run_logged_session(
             f"expiration={expiration.isoformat()}",
             file=tee,
         )
+        print(
+            "SESSION SOURCE: "
+            f"git_commit={source_state.git_commit} | "
+            f"worktree={source_state.worktree}",
+            file=tee,
+        )
+        if approved_commit is not None and (
+            _GIT_COMMIT_PATTERN.fullmatch(approved_commit) is None
+            or source_state.git_commit != approved_commit
+            or source_state.worktree != "clean"
+        ):
+            print(
+                "SESSION RUN RESULT: BLOCKED | "
+                "reason=source_revision_unapproved",
+                file=tee,
+            )
+            return 2, log_path
         with redirect_stdout(tee), redirect_stderr(tee):
             try:
                 exit_code = session_main(arguments)
@@ -166,6 +231,14 @@ def main(argv=None) -> int:
         type=date.fromisoformat,
     )
     parser.add_argument(
+        "--approved-commit",
+        default=None,
+        help=(
+            "Exact reviewed Git commit required by unattended automation. "
+            "A mismatch or tracked worktree change fails closed."
+        ),
+    )
+    parser.add_argument(
         "--expiration",
         required=True,
         type=date.fromisoformat,
@@ -179,6 +252,7 @@ def main(argv=None) -> int:
         completed_through=args.completed_through,
         expiration=args.expiration,
         now=datetime.now().astimezone(),
+        approved_commit=args.approved_commit,
     )
     return exit_code
 

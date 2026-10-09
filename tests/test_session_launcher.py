@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone
 from io import StringIO
 
 from lockean_lite.session_launcher import (
+    SourceState,
     build_approved_session_arguments,
     build_session_log_path,
     run_logged_session,
@@ -85,6 +86,10 @@ def test_run_logged_session_creates_logs_directory_and_tees_console_output(
         now=datetime(2026, 10, 1, 13, 30, 45, tzinfo=timezone.utc),
         session_main=session_main,
         console=console,
+        source_state_provider=lambda _: SourceState(
+            git_commit="a" * 40,
+            worktree="clean",
+        ),
     )
 
     assert exit_code == 0
@@ -102,6 +107,10 @@ def test_run_logged_session_creates_logs_directory_and_tees_console_output(
     assert "SESSION RUN RESULT: COMPLETE | exit_code=0" in (
         log_path.read_text(encoding="utf-8")
     )
+    assert (
+        "SESSION SOURCE: git_commit=" + ("a" * 40) + " | worktree=clean"
+        in log_path.read_text(encoding="utf-8")
+    )
 
 
 def test_run_logged_session_records_sanitized_fatal_error(tmp_path):
@@ -118,6 +127,10 @@ def test_run_logged_session_records_sanitized_fatal_error(tmp_path):
         now=datetime(2026, 10, 5, 19, 26, 2, tzinfo=timezone.utc),
         session_main=failing_session_main,
         console=console,
+        source_state_provider=lambda _: SourceState(
+            git_commit="b" * 40,
+            worktree="clean",
+        ),
     )
 
     log_text = log_path.read_text(encoding="utf-8")
@@ -129,3 +142,51 @@ def test_run_logged_session_records_sanitized_fatal_error(tmp_path):
     )
     assert "credential-value-must-not-appear" not in log_text
     assert "SESSION RUN RESULT: ABORTED" in console.getvalue()
+
+
+def test_approved_commit_blocks_mismatched_source_before_session_runs(tmp_path):
+    calls = []
+    console = StringIO()
+
+    exit_code, log_path = run_logged_session(
+        repo_root=tmp_path,
+        day_number=24,
+        completed_through=date(2026, 10, 9),
+        expiration=date(2026, 10, 16),
+        now=datetime(2026, 10, 12, 13, 15, tzinfo=timezone.utc),
+        session_main=lambda arguments: calls.append(arguments),
+        console=console,
+        approved_commit="c" * 40,
+        source_state_provider=lambda _: SourceState(
+            git_commit="d" * 40,
+            worktree="clean",
+        ),
+    )
+
+    assert exit_code == 2
+    assert calls == []
+    assert (
+        "SESSION RUN RESULT: BLOCKED | reason=source_revision_unapproved"
+        in log_path.read_text(encoding="utf-8")
+    )
+
+
+def test_approved_commit_blocks_tracked_worktree_changes(tmp_path):
+    calls = []
+
+    exit_code, _ = run_logged_session(
+        repo_root=tmp_path,
+        day_number=24,
+        completed_through=date(2026, 10, 9),
+        expiration=date(2026, 10, 16),
+        now=datetime(2026, 10, 12, 13, 15, tzinfo=timezone.utc),
+        session_main=lambda arguments: calls.append(arguments),
+        approved_commit="e" * 40,
+        source_state_provider=lambda _: SourceState(
+            git_commit="e" * 40,
+            worktree="dirty",
+        ),
+    )
+
+    assert exit_code == 2
+    assert calls == []
