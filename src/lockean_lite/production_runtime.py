@@ -157,8 +157,16 @@ def run_live_production_autonomous_cycle(
         intraday_context = read_spy_intraday_context(
             client=stock_client,
         )
+        intraday_status = intraday_context.get(
+            "intraday_status",
+            "UNKNOWN",
+        ).lower()
+        intraday_reason = intraday_context.get(
+            "intraday_reason",
+            "alpaca_iex_minute",
+        )
         intraday_diagnostic = (
-            "intraday_context=available:alpaca_iex_minute"
+            f"intraday_context={intraday_status}:{intraday_reason}"
         )
     except Exception as error:
         intraday_reason = safe_exception_reason(error)

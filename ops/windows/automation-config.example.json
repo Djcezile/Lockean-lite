@@ -1,0 +1,12 @@
+{
+  "repo_root": "C:\\Users\\YOUR_USER\\Desktop\\Lockean Lite\\lockean-lite",
+  "python_path": "C:\\Users\\YOUR_USER\\Desktop\\Lockean Lite\\lockean-lite\\.venv\\Scripts\\python.exe",
+  "approved_commit": "REPLACE_WITH_40_CHARACTER_GIT_COMMIT",
+  "daily_task_name": "LockeanLite-DailyPaper",
+  "watchdog_task_name": "LockeanLite-Watchdog",
+  "daily_start": "09:15",
+  "watchdog_start": "09:20",
+  "heartbeat_timeout_seconds": 180,
+  "completion_grace_minutes": 15,
+  "watchdog_poll_seconds": 120
+}
