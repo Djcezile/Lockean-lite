@@ -61,6 +61,7 @@ def test_watchdog_wrapper_uses_dpapi_secret_and_independent_module():
 def test_push_setup_generates_private_ntfy_topic_and_uses_dpapi():
     text = (OPS / "Set-LockeanLitePush.ps1").read_text(encoding="utf-8")
     assert "RandomNumberGenerator" in text
+    assert "New-Object byte[] 16" in text
     assert "https://ntfy.sh/" in text
     assert "Export-Clixml" in text
     assert "Set-Clipboard" in text
