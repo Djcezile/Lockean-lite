@@ -42,6 +42,7 @@ foreach ($name in @(
     'Watch-LockeanLite.ps1',
     'Verify-LockeanLiteAutomation.ps1',
     'Set-LockeanLiteNotification.ps1',
+    'Set-LockeanLitePush.ps1',
     'Install-LockeanLiteAutomation.ps1'
 )) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $binDir $name) -Force

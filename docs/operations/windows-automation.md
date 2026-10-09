@@ -20,7 +20,7 @@ in the README.
 | `session_launcher.py` | Create the canonical repository log, record source provenance, invoke the approved policy | Through the existing paper pipeline |
 | `Watch-LockeanLite.ps1` | Start a separate lifecycle monitor and load its protected endpoint | No |
 | `session_watchdog.py` | Detect missing starts/logs/heartbeats/completion, planner failures, terminal failures, and source mismatch | No |
-| `notification.py` | Send a small sanitized HTTPS webhook message | No |
+| `notification.py` | Send a small sanitized HTTPS webhook or ntfy mobile-push message | No |
 
 The watchdog is process- and task-independent from the session runner, but it
 is not host-independent: if the Windows computer is powered off, cannot log in,
@@ -55,7 +55,8 @@ account telemetry.
 4. Alpaca paper and OpenAI credentials are stored as Windows *User*
    environment variables.
 5. The authorization key and notification endpoint are stored with
-   user-scoped Windows DPAPI.
+   user-scoped Windows DPAPI. For mobile push, install the ntfy app on the
+   destination phone before verification.
 6. The Windows user remains logged in. The tasks use interactive-user logon so
    that the same user environment and DPAPI scope are available.
 
@@ -113,12 +114,34 @@ $repo = (Get-Location).Path
 That command stages files and configuration only. It prints that scheduled
 tasks were not changed.
 
-Store the HTTPS endpoint for the alert destination. The script prompts with
-hidden input and exports only a DPAPI-protected `SecureString`:
+For mobile push without Slack or Google Workspace, install the
+[ntfy app](https://docs.ntfy.sh/subscribe/phone/) on the phone, then run:
+
+```powershell
+& "$env:LOCALAPPDATA\LockeanLite\Automation\bin\Set-LockeanLitePush.ps1"
+```
+
+The script generates a 256-bit random private topic, saves only its HTTPS
+endpoint as a user-DPAPI-protected `SecureString`, displays the topic, and
+copies it to the Windows clipboard. In the ntfy app, tap `+` and subscribe to
+that exact topic on the default `https://ntfy.sh` server. Do this before the
+verification command because verification sends a real labelled test alert.
+
+The topic is a bearer secret. ntfy topics are created on demand and anyone who
+knows a topic can subscribe or publish, so never put it in Git, chat, a
+screenshot, a public note, or an ordinary log. The 256-bit generated suffix
+makes accidental guessing impractical. The notifier also refuses weak or
+ambiguous `ntfy.sh` URLs.
+
+To use some other HTTPS webhook instead, retain the generic hidden-input setup:
 
 ```powershell
 & "$env:LOCALAPPDATA\LockeanLite\Automation\bin\Set-LockeanLiteNotification.ps1"
 ```
+
+SMS is not configured in this release. Direct SMS would add a paid provider,
+phone-number handling, and another credential; ntfy supplies the requested
+phone alert without those dependencies.
 
 Verify the exact staged commit:
 
