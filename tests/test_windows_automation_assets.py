@@ -13,6 +13,7 @@ def test_windows_automation_assets_are_version_controlled_and_secret_free():
         "Install-LockeanLiteAutomation.ps1",
         "Verify-LockeanLiteAutomation.ps1",
         "Set-LockeanLiteNotification.ps1",
+        "Set-LockeanLitePush.ps1",
         "automation-config.example.json",
     }
     assert expected <= {path.name for path in OPS.iterdir()}
@@ -55,3 +56,12 @@ def test_watchdog_wrapper_uses_dpapi_secret_and_independent_module():
     assert "Import-Clixml" in text
     assert "LOCKEAN_NOTIFICATION_WEBHOOK" in text
     assert "lockean_lite.automation.session_watchdog" in text
+
+
+def test_push_setup_generates_private_ntfy_topic_and_uses_dpapi():
+    text = (OPS / "Set-LockeanLitePush.ps1").read_text(encoding="utf-8")
+    assert "RandomNumberGenerator" in text
+    assert "https://ntfy.sh/" in text
+    assert "Export-Clixml" in text
+    assert "Set-Clipboard" in text
+    assert "notification-endpoint.xml" in text

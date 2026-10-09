@@ -187,10 +187,13 @@ The 09:15 ET daily task writes complete trading logs to this repository's
 `logs` subfolder. A separate 09:20 ET watchdog uses Alpaca calendar hours to
 handle holidays and early closes, detects missing/stale lifecycle evidence,
 and sends idempotent sanitized alerts through a user-DPAPI-protected HTTPS
-endpoint. Neither task pulls Git or retries a broker-capable session.
+endpoint. Native phone push is supported through a generated private ntfy
+topic, so Slack and Google Workspace are not required. Neither task pulls Git
+or retries a broker-capable session.
 
 - [Windows deployment and operations runbook](docs/operations/windows-automation.md)
 - [Pinned automation decision](docs/decisions/2026-10-09_pinned-unattended-automation.md)
+- [Private ntfy mobile-push decision](docs/decisions/2026-10-09_private-ntfy-mobile-push.md)
 - [Day 23 unattended-session audit](docs/build_log/2026-10-09_lite-day-23-unattended-automation.md)
 
 Day 23 proved one full scheduled process cycle, not profitability: it finished
