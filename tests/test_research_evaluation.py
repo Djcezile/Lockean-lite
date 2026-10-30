@@ -47,3 +47,41 @@ def test_empty_evidence_and_unsupported_configuration_fail():
 def test_integrity_pin_required_and_tampering_rejected():
     with pytest.raises(ValueError):kernel_evaluate(spec(),inputs())
     with pytest.raises(ValueError):kernel_evaluate(spec(),inputs(),approved_input_digest='0'*64)
+
+
+def interval_inputs(start,end):
+    """Generated marks only; never load protected historical observations."""
+    return tuple(Observation(datetime.fromisoformat(t),datetime.fromisoformat(t),
+                             Decimal(p),'fixture','synthetic','sha256:'+'a'*64)
+                 for t,p in ((start,'100'),(end,'102')))
+
+
+def test_evaluation_rejects_interval_enclosing_holdout_with_matching_digest():
+    rows=interval_inputs('2026-10-19T14:00:00Z','2027-01-04T14:00:00Z')
+    experiment=Experiment('protected-span',rows[-1].available_at,{})
+    with pytest.raises(ValueError,match='^protected_holdout_overlap$'):
+        kernel_evaluate(experiment,rows,approved_input_digest=input_digest(rows))
+
+
+@pytest.mark.parametrize('start,end,allowed',[
+    ('2026-10-18T14:00:00Z','2026-10-19T14:00:00Z',True),
+    ('2027-01-04T14:00:00Z','2027-01-05T14:00:00Z',True),
+    # UTC October 20 is still October 19 in New York before 04:00Z.
+    ('2026-10-19T23:00:00Z','2026-10-20T03:59:59Z',True),
+    ('2027-01-01T05:00:00Z','2027-01-01T06:00:00Z',True),
+    ('2026-10-20T03:59:59Z','2026-10-20T04:00:00Z',False),
+    ('2026-12-31T23:00:00Z','2027-01-01T05:00:00Z',False),
+    # UTC January 1 remains protected December 31 in New York before 05:00Z.
+    ('2027-01-01T04:00:00Z','2027-01-01T04:59:59Z',False),
+])
+def test_evaluation_interval_boundaries_use_new_york_dates(start,end,allowed):
+    rows=interval_inputs(start,end)
+    experiment=Experiment('interval-boundary',rows[-1].available_at,{})
+    if not allowed:
+        with pytest.raises(ValueError,match='^protected_holdout_overlap$'):
+            kernel_evaluate(experiment,rows,approved_input_digest=input_digest(rows))
+        return
+    result=kernel_evaluate(experiment,rows,approved_input_digest=input_digest(rows))
+    assert result['decisions'][0]['gross']=='2'
+    assert result['decisions'][1]['decision']=='NO_TRADE'
+    assert result['options_profit_qualification']=='UNKNOWN'

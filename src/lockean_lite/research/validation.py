@@ -43,3 +43,6 @@ def validate_observations(rows,decision):
         current=(row.provider,row.feed,row.source_digest)
         if identity is not None and identity!=current:raise ValueError('mixed_source')
         identity=current;previous=event
+    # Individually allowed endpoints can still enclose the protected interval.
+    validate_partition(rows[0].event_at.astimezone(NY).date().isoformat(),
+                       rows[-1].event_at.astimezone(NY).date().isoformat(),'development')
