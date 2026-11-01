@@ -434,3 +434,37 @@ def test_never_mutates_supplied_bundle():
     qualify(b)
     assert c.canonical({k: v for k, v in b.items() if k != 'payload_bytes'}) == before
     assert b['payload_bytes'] is raw
+
+
+@pytest.mark.parametrize('start', ['2026-06-02T13:30:00Z', '2026-06-01T13:32:00Z'])
+def test_reversed_nonprotected_interval_has_distinct_rejection_reason(start):
+    b = fixture()
+    row = replace(b['records'][0], event_start=stamp(start))
+    b = assemble((row,), b['calendar'], b['policy'])
+    r = assert_reason(b, 'REJECTED', 'reversed_range')
+    assert 'protected_holdout_overlap' not in r.reasons
+
+
+@pytest.mark.parametrize('local_day,start', [
+    ('2026-10-19', '2026-10-20T03:56:00Z'),
+    ('2027-01-01', '2027-01-01T05:00:00Z'),
+])
+def test_approved_new_york_midnight_boundaries_qualify(local_day, start):
+    c, v = api()
+    b = fixture()
+    opening = stamp(start)
+    closing = opening + timedelta(minutes=2)
+    decision = closing + timedelta(minutes=1)
+    calendar = replace(b['calendar'], start_date=local_day, end_date=local_day,
+                       sessions=[c.Session(local_day, opening, closing)])
+    policy = replace(b['policy'], decision_at=decision)
+    rows = tuple(replace(row, event_start=opening+timedelta(minutes=i),
+                         event_end=opening+timedelta(minutes=i+1),
+                         available_at=opening+timedelta(minutes=i+1), captured_at=decision)
+                 for i, row in enumerate(b['records']))
+    b = assemble(rows, calendar, policy)
+    assert all(t.astimezone(v.NY).date().isoformat() == local_day
+               for t in (opening, closing, decision))
+    r = assert_reason(b, 'QUALIFIED', 'all_required_checks_satisfied')
+    assert r.expected_count == r.observed_count == 2 and not r.missing_intervals
+    assert r.options_status == 'UNKNOWN' and r.evidence_kind == 'SYNTHETIC_ONLY'
