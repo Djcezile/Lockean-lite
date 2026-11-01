@@ -191,6 +191,8 @@ def qualify(*, manifest, records, payload_bytes, approval, calendar, policy,
             raise _Reject('invalid_payload') from None
         # Check the actual bytes' intervals as well as their normalized representation.
         for row in decoded:
+            # Reuse M0's reversed_range reason before projecting dates into holdout checks.
+            _check(row.event_start <= row.event_end, 'reversed_range')
             _protect_time(row.event_start, row.event_end)
             if row.available_at is not None:
                 _protect_time(row.available_at, row.available_at)
