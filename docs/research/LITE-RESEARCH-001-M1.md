@@ -157,7 +157,37 @@ SPY bars never establish options eligibility, fills or profitability.
 |---|---|
 | QUALIFIED | `all_required_checks_satisfied` |
 | UNKNOWN | `no_expected_sessions`, `required_coverage_incomplete`, `calendar_unverified`, `point_in_time_availability_unverified`, `source_revision_unverified`, `license_unverified`, `historical_options_evidence_unavailable`, `observation_stale` |
-| REJECTED | `invalid_manifest`, `approval_not_verified`, `identity_mismatch`, `invalid_payload`, `payload_integrity_mismatch`, `payload_record_mismatch`, `unauthorized_dataset_scope`, `invalid_calendar`, `qualification_resource_limit`, `invalid_observation`, `observation_outside_scope`, `duplicate_or_unordered_observation`, `protected_holdout_overlap` |
+| REJECTED | `invalid_manifest`, `approval_not_verified`, `identity_mismatch`, `invalid_payload`, `payload_integrity_mismatch`, `payload_record_mismatch`, `unauthorized_dataset_scope`, `invalid_calendar`, `qualification_resource_limit`, `invalid_observation`, `observation_outside_scope`, `duplicate_or_unordered_observation`, `reversed_range`, `protected_holdout_overlap` |
+
+### M1.1 diagnostic and boundary alignment
+
+For each decoded Bar, event start > event end rejects as `reversed_range` before
+that interval is projected onto New York dates for protected-date checking. This
+guard follows the existing approval, declared-range and payload checks; it does not
+override an earlier rejection. Zero-duration intervals still fail strict chronology
+as `invalid_observation`. Genuine intersections with the protected New York date
+range, including correctly ordered intervals enclosing it, retain
+`protected_holdout_overlap`.
+
+Committed positive regressions qualify these explicitly approved synthetic schedules:
+
+| Permitted New York date | UTC bar interval | New York bar interval | UTC decision |
+|---|---|---|---|
+| October 19, 2026 | October 20, 03:56-03:58Z | October 19, 23:56-23:58 EDT | October 20, 03:59Z |
+| January 1, 2027 | January 1, 05:00-05:02Z | January 1, 00:00-00:02 EST | January 1, 05:03Z |
+
+UTC October 20 before 04:00Z is still the permitted October 19 in New York;
+UTC January 1 before 05:00Z is still protected December 31 in New York. The
+inclusive protected-date checks remain unchanged. These positive cases use matching
+generated calendars, payloads, manifests, approval pins and availability evidence;
+they establish fixture qualification, not actual exchange hours, independently
+authenticated historical availability or options eligibility. Options remain UNKNOWN.
+
+Source: `src/lockean_lite/research/data_validation.py`, decoded-Bar guard and existing
+chronology checks. Regression references in `tests/test_research_data_validation.py`:
+`test_reversed_nonprotected_interval_has_distinct_rejection_reason`,
+`test_approved_new_york_midnight_boundaries_qualify`,
+`test_holdout_new_york_boundaries`, and `test_enclosing_observation_interval_rejected_before_scope_error`.
 
 UNKNOWN reasons are deduplicated and sorted. REJECTED returns the first deterministic
 blocking reason; diagnostics are not an exhaustive claim about all invalid inputs.
