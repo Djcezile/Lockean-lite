@@ -160,6 +160,13 @@ Include:
 - Artifact paths, hashes and review/publication status.
 - Outstanding decisions and one next action.
 
+Require sanitized evidence and redacted diagnostics. Do not publish secrets,
+tokens, credentials, confidential information or restricted provider material in
+logs, manifests, PRs or handoffs. Preserve reproducibility using safe metadata and
+hashes without disclosing protected contents. Capture evidence safely from the
+outset; retain immutable sanitized RED/GREEN records without retaining prohibited
+contents in those artifacts.
+
 Keep artifacts outside Git unless their tracked locations are approved.
 Preserve earlier evidence rather than replacing it.
 Do not create administrative micro-milestones or new orchestration infrastructure
