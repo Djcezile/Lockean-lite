@@ -174,3 +174,29 @@ issuance and context custody are not solved by this pure synthetic gate. They
 require separate verified evidence and explicit scope. M0's canonical collision
 remains deferred before typed parameters drive evaluation. Protected observations,
 brokers, production systems and private Original Lockean remain out of scope.
+
+## M2.1 — defensive timestamp hardening
+
+Constructor-valid extreme UTC instants can fall outside Python's representable
+datetime range when projected into New York local dates. All such projections in
+the admission gate now use one helper that catches only `OverflowError`, records
+REJECTED reason `timestamp_out_of_range`, and withholds date-dependent checks for
+that unrepresentable instant. Rejection remains mandatory and takes precedence
+over UNKNOWN; no date is clamped, timezone substituted or observation admitted.
+Unrelated programming failures propagate. Existing holdout and chronology checks
+remain unchanged for representable instants.
+
+Generated regressions cover minimum UTC event/availability values, the first
+representable New York local boundary and one microsecond before it, maximum UTC
+values, combined missing/malformed trust evidence, and unrelated projection errors.
+Context substitution still cannot satisfy the original trusted pin. Deliberately
+replacing BOTH context and pin remains outside the library's authentication
+boundary; no approval issuance or custody guarantee was added.
+
+Actual M2.1 baseline: 605 passed, one known warning, exit 0. Genuine RED: 8 failed,
+79 passed, exit 1, reproducing uncaught timezone-projection OverflowError. GREEN:
+87 focused M2, 121 existing M0/M1 research, 57 safety and 617 full-suite tests passed,
+exits 0; no skips, one existing websockets.legacy dependency warning. These runs
+are distinct from the historical M2.0 results above. The valid report was manually
+reconstructed without test fixture helpers and remained byte-for-byte identical
+with the SHA-256 above. All synthetic-only limitations and output labels remain.

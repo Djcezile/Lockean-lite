@@ -193,8 +193,18 @@ def admit(package, approval_id, *, trusted_context, expected_context_sha256, as_
             rejected.add('protected_holdout_overlap' if str(error) == 'protected_holdout_overlap'
                          else 'invalid_chronology')
 
+    def local_date(value):
+        try:
+            local = value.astimezone(NY)
+        except OverflowError:
+            rejected.add('timestamp_out_of_range')
+            return None
+        return local.date().isoformat()
+
     def protect_time(start, end):
-        protect(start.astimezone(NY).date().isoformat(), end.astimezone(NY).date().isoformat())
+        a, b = local_date(start), local_date(end)
+        if a is not None and b is not None:
+            protect(a, b)
 
     if type(package) is not Package:
         rejected.add('invalid_package')
@@ -214,7 +224,8 @@ def admit(package, approval_id, *, trusted_context, expected_context_sha256, as_
         elif not package.event_end <= package.available_at <= package.captured_at:
             rejected.add('invalid_chronology')
         for t in (package.event_start, package.event_end):
-            if not package.dates.start <= t.astimezone(NY).date().isoformat() <= package.dates.end:
+            local = local_date(t)
+            if local is not None and not package.dates.start <= local <= package.dates.end:
                 rejected.add('event_outside_declared_dates')
         if _duplicates([e.kind for e in package.evidence]):
             rejected.add('duplicate_metadata')
