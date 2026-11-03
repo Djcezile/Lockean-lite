@@ -353,3 +353,70 @@ def test_full_caller_control_is_not_external_authentication():
     # supposedly trusted inputs is outside its security boundary, not a valid pin attack.
     b=fixture(package_id='different-simulated-issuer-package')
     result(b,'ADMITTED','all_required_synthetic_checks_satisfied')
+
+
+@pytest.mark.parametrize('field', ['event_start','event_end','available_at'])
+@pytest.mark.parametrize('missing_context', [False, True])
+def test_minimum_utc_timestamp_rejected_without_projection_exception(field, missing_context):
+    m=api(); b=fixture(); minimum=datetime.min.replace(tzinfo=timezone.utc)
+    b=issue(replace(b['package'],**{field:minimum}))
+    if missing_context:
+        b['trusted_context']=None
+    r=result(b,'REJECTED','timestamp_out_of_range')
+    assert b'OverflowError' not in m.report_bytes(r)
+
+
+def test_representable_new_york_boundary_and_one_microsecond_before():
+    m=api(); b=fixture(); minimum=datetime.min.replace(tzinfo=timezone.utc)
+    # Compute the local-range boundary from installed IANA timezone rules, not
+    # today's UTC offset; New York has historical second-resolution offsets.
+    boundary=minimum-m.NY.utcoffset(minimum)
+    p=replace(b['package'],dates=m.DateRange('0001-01-01','0001-01-01'),
+              event_start=boundary,event_end=boundary+timedelta(minutes=1),
+              available_at=boundary+timedelta(minutes=1),captured_at=boundary+timedelta(minutes=2))
+    b=issue(p,valid_from=minimum,valid_until=minimum+timedelta(days=1));b['as_of']=p.captured_at
+    result(b,'ADMITTED','all_required_synthetic_checks_satisfied')
+    b=issue(replace(p,event_start=boundary-timedelta(microseconds=1)),
+            valid_from=minimum,valid_until=minimum+timedelta(days=1));b['as_of']=p.captured_at
+    result(b,'REJECTED','timestamp_out_of_range')
+
+
+def test_maximum_utc_timestamp_remains_representable_in_new_york():
+    m=api(); b=fixture(); maximum=datetime.max.replace(tzinfo=timezone.utc)
+    p=replace(b['package'],dates=m.DateRange('9999-12-31','9999-12-31'),
+              event_start=maximum-timedelta(minutes=3),event_end=maximum-timedelta(minutes=2),
+              available_at=maximum-timedelta(minutes=2),captured_at=maximum-timedelta(minutes=1))
+    b=issue(p,valid_from=maximum-timedelta(days=1),valid_until=maximum);b['as_of']=p.captured_at
+    result(b,'ADMITTED','all_required_synthetic_checks_satisfied')
+
+
+def test_unrelated_projection_programming_error_is_not_suppressed(monkeypatch):
+    from datetime import tzinfo
+    m=api(); b=fixture()
+    class BrokenZone(tzinfo):
+        def fromutc(self, value): raise RuntimeError('synthetic-programming-error')
+    monkeypatch.setattr(m,'NY',BrokenZone())
+    with pytest.raises(RuntimeError,match='^synthetic-programming-error$'):
+        m.admit(**b)
+
+
+def test_bad_context_plus_extreme_timestamp_still_rejected():
+    b=fixture(event_start=datetime.min.replace(tzinfo=timezone.utc))
+    b['trusted_context']={};b['expected_context_sha256']=None
+    r=result(b,'REJECTED','timestamp_out_of_range')
+    assert 'invalid_trust_context' in r.reasons
+
+
+def test_context_substitution_keeps_original_pin_even_for_forged_matching_package():
+    m=api(); original=fixture(); forged=fixture(package_id='forged-but-consistent')
+    assert m.identity(forged['trusted_context'])==forged['expected_context_sha256']
+    forged['expected_context_sha256']=original['expected_context_sha256']
+    result(forged,'REJECTED','trust_anchor_mismatch')
+    # Deliberately replacing BOTH trusted inputs remains outside authentication.
+    forged['expected_context_sha256']=m.identity(forged['trusted_context'])
+    result(forged,'ADMITTED','all_required_synthetic_checks_satisfied')
+
+
+def test_valid_report_matches_frozen_m2_identity():
+    m=api(); r=m.admit(**fixture())
+    assert m.identity(r)=='8dceca7227bc6bad9846a2954ed98eeef6fc5efb053bcee78abc15d013c93adf'
