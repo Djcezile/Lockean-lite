@@ -9,7 +9,9 @@ New component: src/lockean_lite/research/signed_approvals.py, its test module,
 and this document. One essential dependency-manifest edit: pyproject.toml adds
 the optional research-crypto extra, cryptography==50.0.2. The dev extra pins the
 same library so the existing README dev-install/full-test workflow remains usable.
-Neither addition changes base operational dependencies. M0/M1/M2 source,
+Both extras also pin PyNaCl==1.6.2 for mandatory vetted public-point validation;
+Ed25519 signing/verification remains cryptography, not a replacement algorithm.
+These additions do not change base operational dependencies. M0/M1/M2 source,
 serializers, schemas, historical evidence and operational components are unchanged.
 
 This is a pure, offline, synthetic API. It does not provision real approval
@@ -192,3 +194,53 @@ policy and critical adversarial tests; independently replay the PUBLIC fixture a
 probe for unsigned bypass. Implementer self-review is preliminary evidence only.
 Windows and deployment verification are unperformed. No protected components or
 real-world evidence were used or modified. No next milestone is authorized.
+
+## Required security correction — unsafe public-key encodings
+
+Independent local reproduction showed cryptography 50.0.2 / OpenSSL 4.0.3 accepts
+the identity-point public key (01 then 31 zero bytes) with signature R=identity,
+S=zero (01 then 63 zero bytes), for distinct messages. With that key in an approved
+synthetic root, uncorrected M3 returned ADMITTED/VERIFIED without a private key.
+The constructor's 32-byte length check and verification alone were insufficient.
+
+M3 now applies PyNaCl's maintained libsodium primitive
+`crypto_core_ed25519_is_valid_point` to the selected trusted-policy public key
+before OpenSSL verification. The primitive requires canonical representation,
+curve membership, main-subgroup membership and absence of small order. This is
+not an identity blacklist or hand-written subgroup/curve algorithm. Signing and
+signature verification still use the pinned cryptography Ed25519 implementation.
+
+Pinned API contract:
+https://github.com/pyca/pynacl/blob/1.6.2/src/nacl/bindings/crypto_core.py
+
+Upstream implementation:
+https://github.com/jedisct1/libsodium/blob/1.0.20-RELEASE/src/libsodium/crypto_core/ed25519/core_ed25519.c
+
+The exact PyNaCl 1.6.2 source distribution was downloaded, its published SHA-256
+checked, and its vendored 1.0.20 configure/source and validator checks inspected.
+Source hashes are retained in the correction evidence. The installed wheel's
+supported binding docstring matches these guarantees; it exposes no runtime
+libsodium-version query, so the vendored source version is not misrepresented as
+a runtime measurement of the wheel. PyNaCl reuses existing cffi; base operational
+dependencies and shared environments remain unchanged.
+
+False validity returns REJECTED/unsafe_public_key; a minimal build raising
+UnavailableError returns REJECTED/public_key_validation_unavailable. There is no
+fallback if validation is absent. Other programming errors propagate. This checks
+the selected key, not every unused policy entry or the authenticity of policy
+custody. It does not authenticate an issuer's facts, authorize a root, prove true
+availability/licensing, or supply replay consumption. External root/pin custody
+remains mandatory. Existing signing bytes, schemas and valid report bytes are unchanged.
+
+Genuine correction RED: 9 failed, 68 passed, exit 1. The identity forgery produced
+ADMITTED instead of required REJECTED. GREEN: 77 M3, 208 existing M0/M1/M2 research,
+57 safety and 694 full-suite passes, exits 0. No skips; one existing websockets.legacy
+warning. Vectors exercise identity, low order, noncanonical, off-curve encodings,
+and a mixed-order point constructed using maintained library addition in a test
+fixture only. No custom elliptic-curve arithmetic was introduced. Ordinary keys,
+rotation, revocation and previous signature substitutions remain covered. The
+recorded public fixture report still hashes to
+1b354e92ae925a07ca7daa294f3437d517bb13fc0162d2172ffd647e35fa70bd.
+
+These are implementer results, not independent security acceptance. The new exact
+commit and validator/dependency choice require independent review before merge.

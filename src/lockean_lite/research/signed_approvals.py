@@ -6,6 +6,8 @@ import re
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+from nacl.bindings import crypto_core_ed25519_is_valid_point
+from nacl.exceptions import UnavailableError
 
 from . import evidence_admission as m2
 from .data_contracts import DateRange, canonical, digest
@@ -238,6 +240,11 @@ def verify_admission(package, envelope, *, policy, expected_policy_sha256, as_of
     fingerprint = hashlib.sha256(bytes.fromhex(key.public_key_hex)).hexdigest()
     if key.fingerprint != fingerprint or msg.key_fingerprint != fingerprint:
         rejected.add('key_identity_mismatch')
+    try:
+        if not crypto_core_ed25519_is_valid_point(bytes.fromhex(key.public_key_hex)):
+            rejected.add('unsafe_public_key')
+    except UnavailableError:
+        rejected.add('public_key_validation_unavailable')
     if key.status != 'ACTIVE':
         rejected.add('key_revoked')
     if key.signing_purpose != SIGNING_PURPOSE:

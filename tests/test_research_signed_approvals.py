@@ -300,3 +300,62 @@ def test_untrusted_package_key_material_cannot_choose_verification_root():
     p=b['package']
     p=replace(p,evidence=(replace(p.evidence[0],reference=b['policy'].keys[0].public_key_hex),)+p.evidence[1:])
     outcome(dict(b,package=p),'REJECTED','package_identity_mismatch')
+
+@pytest.mark.parametrize('message', [b'first synthetic message', b'distinct synthetic message'])
+def test_backend_identity_forgery_explains_why_key_validation_is_mandatory(message):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    from cryptography.exceptions import InvalidSignature
+    # This probe documents backend behavior, not acceptance by the M3 gate.
+    try:
+        Ed25519PublicKey.from_public_bytes(bytes.fromhex('01'+'00'*31)).verify(
+            bytes.fromhex('01'+'00'*63),message)
+    except InvalidSignature:
+        pass  # A future backend may additionally harden this; the gate must stay strict.
+
+def test_identity_root_trivial_forgery_must_be_rejected_end_to_end():
+    s=api();b,_=fixture();public=bytes.fromhex('01'+'00'*31)
+    k=replace(b['policy'].keys[0],public_key_hex=public.hex(),
+              fingerprint=hashlib.sha256(public).hexdigest())
+    b=repolicy(b,keys=(k,))
+    message=replace(b['envelope'].message,key_fingerprint=k.fingerprint)
+    b['envelope']=replace(b['envelope'],message=message,signature_hex='01'+'00'*63)
+    outcome(b,'REJECTED','unsafe_public_key')
+
+@pytest.mark.parametrize('encoding', ['00'*32,'01'+'00'*31,'ff'*32,
+                                     'ec'+'ff'*30+'7f','ee'+'ff'*30+'7f'])
+def test_unsafe_root_encodings_rejected_before_backend_verification(encoding,monkeypatch):
+    s=api();b,_=fixture();raw=bytes.fromhex(encoding)
+    class ForbiddenVerifier:
+        @staticmethod
+        def from_public_bytes(value):raise AssertionError('unsafe key reached verifier')
+    monkeypatch.setattr(s,'Ed25519PublicKey',ForbiddenVerifier)
+    k=replace(b['policy'].keys[0],public_key_hex=encoding,
+              fingerprint=hashlib.sha256(raw).hexdigest())
+    b=repolicy(b,keys=(k,))
+    b['envelope']=replace(b['envelope'],message=replace(b['envelope'].message,key_fingerprint=k.fingerprint))
+    outcome(b,'REJECTED','unsafe_public_key')
+
+def test_mixed_order_root_rejected_using_vetted_fixture_arithmetic():
+    from nacl.bindings import crypto_core_ed25519_add
+    s=api();b,_=fixture();k=b['policy'].keys[0]
+    # Test fixture only: maintained libsodium addition, no hand-written curve math.
+    mixed=crypto_core_ed25519_add(bytes.fromhex(k.public_key_hex),bytes(32))
+    k=replace(k,public_key_hex=mixed.hex(),fingerprint=hashlib.sha256(mixed).hexdigest())
+    b=repolicy(b,keys=(k,))
+    b['envelope']=replace(b['envelope'],message=replace(b['envelope'].message,key_fingerprint=k.fingerprint))
+    outcome(b,'REJECTED','unsafe_public_key')
+
+def test_point_validator_unavailable_fails_closed(monkeypatch):
+    from nacl.exceptions import UnavailableError
+    s=api();b,_=fixture()
+    def unavailable(value):raise UnavailableError('synthetic-sensitive-diagnostic')
+    monkeypatch.setattr(s,'crypto_core_ed25519_is_valid_point',unavailable)
+    r=outcome(b,'REJECTED','public_key_validation_unavailable')
+    assert b'synthetic-sensitive-diagnostic' not in s.report_bytes(r)
+
+def test_point_validator_programming_errors_not_suppressed(monkeypatch):
+    s=api();b,_=fixture()
+    def broken(value):raise RuntimeError('synthetic-code-defect')
+    monkeypatch.setattr(s,'crypto_core_ed25519_is_valid_point',broken)
+    with pytest.raises(RuntimeError,match='^synthetic-code-defect$'):
+        s.verify_admission(**b)
