@@ -41,7 +41,10 @@ M5 synthetic qualification cannot establish real-world provenance.
 Detect malformed input, incorrect purpose, mismatched/stale checkpoint,
 duplicate registration, revoked authority/rights/provenance/study, and study
 IDs marked replayed. A pinned registry must contain the exact study digest
-before checkpoint evidence is associated with it. Compare submitted and pinned
+before checkpoint evidence is associated with it. For that exact registration,
+a revoked study provenance reference blocks even if both dataset records are
+absent. A partially initialized input record, including a nested record with
+an absent declared field, is malformed and blocks before canonicalization. Compare submitted and pinned
 dataset claims. Check raw bytes directly against both available digests, even
 if the submission omits its digest. Missing raw bytes do not invent a mismatch.
 
@@ -51,8 +54,11 @@ the previous completed close and at most one decision per month. The supported
 earnings window begins at the prior session open and ends before the execution
 session opens. An eligible consensus vintage must have been received before
 the original publication. Reject lookback or horizon shortfalls and coverage
-outside the calendar. All declared instruments must be eligible throughout
-their required span. Trend requires a sample for every decision/instrument
+outside the calendar. Each instrument attests continuous coverage over its inclusive coverage span.
+It must cover every declared calendar-backed fold in full, including time before
+the first or after the last decision, and all required decision dependencies.
+Coverage shortfalls within a declared fold produce `fold_coverage_incomplete`.
+The synthetic span does not independently prove there are no missing source rows. Trend requires a sample for every decision/instrument
 pair. Earnings requires at least one witness per decision. Covered spans include
 the declared fold plus required prior sessions and later label sessions.
 A dependency overlap or too few intervening embargo sessions blocks progression.

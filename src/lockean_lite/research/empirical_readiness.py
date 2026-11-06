@@ -253,6 +253,7 @@ _DATA_FLAGS = (
     "distributions_complete", "revisions_as_known",
 )
 _NULLABLE_CLAIMS = ("source", "product", "raw_sha256", *_DATA_FLAGS)
+_MISSING_FIELD = object()
 
 
 @cache
@@ -276,7 +277,7 @@ def _valid(value, kind):
     if type(value) is not kind:
         return False
     if kind in _RECORDS:
-        return all(_valid(getattr(value, name), annotation)
+        return all(_valid(getattr(value, name, _MISSING_FIELD), annotation)
                    for name, annotation in _annotations(kind).items())
     if kind is datetime:
         return value.tzinfo is timezone.utc and not value.fold and 1900 <= value.year <= 2200
@@ -353,20 +354,22 @@ def _session_days(calendar, blocked):
 
 
 def _decision_windows(study, design, days, blocked):
-    """Map decision instants to required inclusive session-index intervals."""
+    """Return decision dependency windows and declared calendar-backed fold spans."""
     sessions = study.calendar.sessions
     indices = {day: i for i, day in enumerate(days)}
-    windows, dependency_spans, months = {}, [], set()
+    windows, fold_spans, dependency_spans, months = {}, [], [], set()
     prior_end = None
     for fold in study.folds:
         _protect(fold.start, fold.end, blocked)
         if prior_end is not None and fold.start <= prior_end:
             blocked.add("fold_overlap")
         prior_end = fold.end
-        if fold.start not in indices or fold.end not in indices or not fold.decisions:
+        if (fold.start not in indices or fold.end not in indices
+                or fold.start > fold.end or not fold.decisions):
             blocked.add("fold_schedule_invalid")
             continue
         lower, upper = indices[fold.start], indices[fold.end]
+        fold_spans.append((days[lower], days[upper]))
         times = tuple(d.at for d in fold.decisions)
         if not _unique(times) or times != tuple(sorted(times)):
             blocked.add("decision_schedule_invalid")
@@ -398,7 +401,7 @@ def _decision_windows(study, design, days, blocked):
             blocked.add("fold_dependency_overlap")
         elif start - end - 1 < study.embargo_sessions:
             blocked.add("embargo_incomplete")
-    return windows
+    return windows, fold_spans
 
 
 def _study(study, as_of, intended_purpose, blocked):
@@ -427,8 +430,8 @@ def _study(study, as_of, intended_purpose, blocked):
         blocked.add("calendar_after_evaluation")
     if design is not None and study.embargo_sessions < design.holding_sessions:
         blocked.add("embargo_incomplete")
-    windows = _decision_windows(study, design, days, blocked) if days and design else {}
-    return days, windows
+    windows, fold_spans = _decision_windows(study, design, days, blocked) if days and design else ({}, ())
+    return days, windows, fold_spans
 
 
 def _sample(row, study, i, left, days, blocked, missing):
@@ -467,7 +470,7 @@ def _sample(row, study, i, left, days, blocked, missing):
         blocked.add("earnings_basis_mismatch")
 
 
-def _dataset(data, study, raw_hash, days, windows, blocked, missing):
+def _dataset(data, study, raw_hash, days, windows, fold_spans, blocked, missing):
     for field, code in (("source", "source_missing"), ("product", "product_missing"),
                         ("raw_sha256", "raw_digest_missing")):
         if getattr(data, field) is None:
@@ -496,6 +499,9 @@ def _dataset(data, study, raw_hash, days, windows, blocked, missing):
                 or not instrument.eligible or instrument.listed_on > instrument.coverage_start
                 or (instrument.delisted_on is not None and instrument.delisted_on < instrument.coverage_end)):
             blocked.add("instrument_coverage_invalid")
+        if any(instrument.coverage_start > start or instrument.coverage_end < end
+               for start, end in fold_spans):
+            blocked.add("fold_coverage_incomplete")
         if earliest is not None and instrument.coverage_start > days[earliest]:
             blocked.add("lookback_incomplete")
         if latest is not None and instrument.coverage_end < days[latest]:
@@ -565,6 +571,8 @@ def _registered(checkpoint, study, protocol, blocked, missing):
     if registration.study_sha256 != protocol:
         blocked.add("study_registration_mismatch")
         return False
+    if study.provenance_ref in checkpoint.revoked:
+        blocked.add("provenance_revoked")
     return True
 
 
@@ -666,9 +674,9 @@ def qualify(study, dataset, *, raw_bytes, checkpoint, expected_checkpoint_sha256
         blocked.add("study_invalid")
     else:
         protocol = _digest(study)
-        days, windows = _study(study, at, intended_purpose, blocked)
+        days, windows, fold_spans = _study(study, at, intended_purpose, blocked)
         if valid_data:
-            _dataset(dataset, study, raw_hash, days, windows, blocked, missing)
+            _dataset(dataset, study, raw_hash, days, windows, fold_spans, blocked, missing)
         if current is not None and _registered(current, study, protocol, blocked, missing):
             known = current.dataset
             known_hash = None
@@ -683,7 +691,7 @@ def qualify(study, dataset, *, raw_bytes, checkpoint, expected_checkpoint_sha256
                     blocked.add("checkpoint_precedes_coverage")
                 if {known.source, known.product, known.version, known.provenance_ref} & set(current.revoked):
                     blocked.add("provenance_revoked")
-                _dataset(known, study, raw_hash, days, windows, blocked, missing)
+                _dataset(known, study, raw_hash, days, windows, fold_spans, blocked, missing)
             _rights(current.rights, study, known, current, at, blocked, missing)
             _costs(current.costs, study.limits, protocol, known_hash, at, blocked, missing)
             review_status = _review(current, study, protocol, known_hash, blocked, missing)

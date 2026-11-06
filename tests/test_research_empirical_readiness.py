@@ -343,3 +343,127 @@ def test_known_license_and_reviewer_revocations_survive_missing_grant():
     assert report.status == "BLOCKED"
     assert {"rights_revoked", "reviewer_access_mismatch"} <= set(report.reasons)
     assert "rights_missing" in report.missing
+
+
+def _session_date(study, index):
+    return local(study.calendar.sessions[index].open_at)
+
+
+def _decision_index(study, fold):
+    return next(i for i, session in enumerate(study.calendar.sessions)
+                if local(session.open_at) == local(fold.decisions[0].at))
+
+
+def test_full_fold_tail_requires_coverage_beyond_last_holding_horizon():
+    study, data, checkpoint = fixture()
+    holdout = study.folds[-1]
+    holding_end = _decision_index(study, holdout) + api().DESIGNS["trend"].holding_sessions
+    holdout = replace(holdout, end=_session_date(study, holding_end + 11))
+    study = replace(study, folds=(*study.folds[:-1], holdout))
+    instrument = replace(data.instruments[0], coverage_end=_session_date(study, holding_end))
+    short = replace(data, instruments=(instrument,))
+    report = run(study, short, rebind(study, short, checkpoint))
+    assert report.status == "BLOCKED"
+    assert report.reasons == ("fold_coverage_incomplete",)
+    assert run(study, data, rebind(study, data, checkpoint)).status == "ELIGIBLE_FOR_REVIEW"
+
+
+def test_full_fold_start_requires_coverage_before_first_lookback():
+    study, data, checkpoint = fixture()
+    development = study.folds[0]
+    lookback_start = _decision_index(study, development) - api().DESIGNS["trend"].lookback_sessions
+    development = replace(development, start=_session_date(study, lookback_start - 2))
+    study = replace(study, folds=(development, *study.folds[1:]))
+    instrument = replace(data.instruments[0], coverage_start=_session_date(study, lookback_start))
+    short = replace(data, instruments=(instrument,))
+    report = run(study, short, rebind(study, short, checkpoint))
+    assert report.status == "BLOCKED"
+    assert report.reasons == ("fold_coverage_incomplete",)
+
+
+def test_missing_coverage_between_decisions_blocks_even_with_witnesses():
+    m = api()
+    study, data, checkpoint = fixture("earnings")
+    first = study.folds[0].decisions[0]
+    second_index = _decision_index(study, study.folds[0]) + 30
+    second_at = study.calendar.sessions[second_index].open_at + timedelta(minutes=30)
+    shift = second_at - first.at
+    second = m.Decision(second_at, first.execute_at + shift)
+    development = replace(study.folds[0], end=local(second.at), decisions=(first, second))
+    study = replace(study, folds=(development, *study.folds[1:]))
+    row = data.samples[0]
+    earnings = replace(row.earnings, original_release_at=row.earnings.original_release_at + shift,
+                       consensus_at=row.earnings.consensus_at + shift,
+                       consensus_received_at=row.earnings.consensus_received_at + shift)
+    dates = ("decision_at", "observed_at", "published_at", "provider_received_at",
+             "local_received_at", "actions_at", "benchmark_at", "revision_at")
+    witness = replace(row, earnings=earnings, **{name: getattr(row, name) + shift for name in dates})
+    covered = replace(data, samples=(*data.samples, witness))
+    assert run(study, covered, rebind(study, covered, checkpoint)).status == "ELIGIBLE_FOR_REVIEW"
+    short = replace(covered, instruments=(replace(data.instruments[0],
+                                                  coverage_end=_session_date(study, second_index-1)),))
+    report = run(study, short, rebind(study, short, checkpoint))
+    assert report.status == "BLOCKED"
+    assert "fold_coverage_incomplete" in report.reasons
+
+
+@pytest.mark.parametrize("case", ["invalid_fold", "invalid_calendar"])
+def test_invalid_fold_or_calendar_cannot_establish_coverage(case):
+    study, data, checkpoint = fixture()
+    if case == "invalid_fold":
+        fold = replace(study.folds[0], end=study.folds[0].start - timedelta(days=1))
+        study = replace(study, folds=(fold, *study.folds[1:]))
+        reason = "reversed_date_span"
+    else:
+        sessions = study.calendar.sessions
+        calendar = replace(study.calendar, sessions=(sessions[0], *sessions))
+        study = replace(study, calendar=calendar)
+        data = replace(data, calendar_sha256=api().identity(calendar))
+        reason = "calendar_invalid"
+    report = run(study, data, rebind(study, data, checkpoint))
+    assert report.status == "BLOCKED"
+    assert reason in report.reasons
+    assert "fold_coverage_incomplete" not in report.reasons
+
+
+@pytest.mark.parametrize("revoked", [False, True])
+def test_exact_registered_provenance_revocation_survives_absent_datasets(revoked):
+    study, _, checkpoint = fixture()
+    checkpoint = replace(checkpoint, dataset=None, revoked=(study.provenance_ref,) if revoked else ())
+    report = run(study, None, checkpoint)
+    assert report.status == ("BLOCKED" if revoked else "DRAFT")
+    assert ("provenance_revoked" in report.reasons) is revoked
+    assert {"dataset_missing", "independent_provenance_missing"} <= set(report.missing)
+
+
+@pytest.mark.parametrize(("target", "reason"), [
+    ("dataset", "dataset_invalid"),
+    ("study", "study_invalid"),
+    ("checkpoint", "checkpoint_invalid"),
+    ("nested_sample", "dataset_invalid"),
+    ("nested_fold", "study_invalid"),
+    ("nested_rights", "checkpoint_invalid"),
+])
+def test_partial_exact_class_records_fail_closed_deterministically(target, reason):
+    m = api()
+    study, data, checkpoint = fixture()
+    pin = m.identity(checkpoint)
+    if target == "dataset":
+        data = object.__new__(m.Dataset)
+        object.__setattr__(data, "source", "syn-incomplete")
+    elif target == "study":
+        study = object.__new__(m.Study)
+    elif target == "checkpoint":
+        checkpoint = object.__new__(m.Checkpoint)
+    elif target == "nested_sample":
+        data = replace(data, samples=(object.__new__(m.Sample),))
+    elif target == "nested_fold":
+        study = replace(study, folds=(object.__new__(m.Fold),))
+    else:
+        checkpoint = replace(checkpoint, rights=object.__new__(m.Rights))
+    args = dict(raw_bytes=RAW, checkpoint=checkpoint, expected_checkpoint_sha256=pin,
+                as_of=AS_OF, intended_purpose="synthetic-empirical-readiness")
+    report = m.qualify(study, data, **args)
+    assert report.status == "BLOCKED"
+    assert reason in report.reasons
+    assert m.report_bytes(report) == m.report_bytes(m.qualify(study, data, **args))
