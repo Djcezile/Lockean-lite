@@ -175,6 +175,8 @@ def state_checks(state, at):
         errors.add('state_time')
     policy = state.policy
     if policy is not None:
+        if not policy_revocations(policy) <= set(state.revoked):
+            errors.add('missing_revocation_inheritance')
         if policy.purpose != m3.m2.PURPOSE or not policy.version.isascii() or not policy.version.isdecimal() or str(int(policy.version)) != policy.version:
             errors.add('policy_version')
         if not policy.valid_from <= at < policy.valid_until:
@@ -189,6 +191,8 @@ def state_checks(state, at):
             # Revoked entries may be retained as evidence, but are never active authorities.
             if key.status == 'ACTIVE':
                 errors.update(key_checks(key, state.revoked, at, m3.SIGNING_PURPOSE))
+            elif key.fingerprint != hashlib.sha256(bytes.fromhex(key.public_key_hex)).hexdigest():
+                errors.add('key_identity_mismatch')
     return errors
 
 
@@ -282,6 +286,10 @@ def active(policy):
     return {k.fingerprint for k in policy.keys if k.status == 'ACTIVE'} if policy else set()
 
 
+def policy_revocations(policy):
+    return {k.fingerprint for k in policy.keys if k.status == 'REVOKED'} if policy else set()
+
+
 def transition_rules(old, new, action):
     errors = set()
     if not set(old.revoked) <= set(new.revoked) or new.effective_at < old.effective_at:
@@ -289,7 +297,7 @@ def transition_rules(old, new, action):
     if action == 'BOOTSTRAP':
         return errors | {'invalid_bootstrap'}
     if old.policy is None:
-        if action != 'ACTIVATE' or new.policy is None or new.policy.version != '1' or old.controller != new.controller or old.revoked != new.revoked:
+        if action != 'ACTIVATE' or new.policy is None or new.policy.version != '1' or old.controller != new.controller or set(new.revoked) != set(old.revoked) | policy_revocations(new.policy):
             errors.add('invalid_activation')
         return errors
     if new.policy is None:
@@ -313,7 +321,7 @@ def transition_rules(old, new, action):
         if not set(old.revoked) < set(new.revoked) or active(new.policy) - active(old.policy) or new.controller != old.controller:
             errors.add('invalid_revocation')
     elif action == 'SUPERSEDE':
-        if active(new.policy) != active(old.policy) or new.revoked != old.revoked or new.controller != old.controller:
+        if active(new.policy) != active(old.policy) or set(new.revoked) != set(old.revoked) | policy_revocations(new.policy) or new.controller != old.controller:
             errors.add('invalid_supersession')
     else:
         errors.add('invalid_action')

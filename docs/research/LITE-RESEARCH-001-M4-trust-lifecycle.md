@@ -15,8 +15,9 @@ not manufactured by signing one's own root.
 A separately trusted `Checkpoint` pins current state hash, sequence, anchor hash,
 observation time and expiry. It is not extracted from a submission. The caller is
 responsible for authentic, current, durable checkpoint custody and truthful UTC
-evaluation time. Replacing both checkpoint and trusted anchor/pin lets a caller
-choose another history. The library cannot prove global latestness, disk durability,
+evaluation time. Replacing both the trusted checkpoint and its matching state can
+restore an obsolete history even when the original anchor and anchor pin remain
+unchanged. Replacing anchor/pin as well can select an entirely different root. The library cannot prove global latestness, disk durability,
 ACL effectiveness, human identity, key ownership, external reviewer independence,
 issuance truth, or actual revocation publication time. There is no recovery override.
 
@@ -40,13 +41,30 @@ effective/expiry UTC times, lifecycle controller, optional M3 policy and a sorte
 monotonically retained set of revoked PUBLIC KEY FINGERPRINTS. Fingerprint revocation
 also blocks renamed aliases. Staged genesis has no active M3 policy.
 
+Every policy entry marked REVOKED must already have its public-key fingerprint in
+State.revoked. Missing inheritance rejects with `missing_revocation_inheritance`
+on initial activation, every successor, and current-state admission. Validation
+never silently mutates a signed successor or treats a REVOKED entry as eligible
+for future activation. Revoked-entry fingerprints must match their public-key bytes;
+false metadata rejects with `key_identity_mismatch`.
+
+ACTIVATE and SUPERSEDE permit exactly the old ledger union imported REVOKED
+fingerprints. ROTATE and REVOKE retain their action-specific rules and monotonic
+ledger constraint, plus the same imported-revocation invariant. A policy may later
+remove a retired key entry, but its fingerprint remains permanently in the ledger.
+Changing key ID, issuer ID or policy version cannot make an active alias pass;
+`revoked_signer` still rejects its fingerprint. Even a valid signature from a
+malicious or compromised lifecycle controller cannot waive these mechanical rules.
+Older inconsistent states must be rejected, not auto-repaired or grandfathered.
+Any corrected state/checkpoint must be independently approved outside validation.
+
 | Action | Required successor |
 |---|---|
 | BOOTSTRAP | No predecessor; exact anchor-pinned genesis, controller equals anchor, no policy/revocations, sequence 1 |
-| ACTIVATE | Staged predecessor; M3 numeric policy version `1`; unchanged controller/revocations |
+| ACTIVATE | Staged predecessor; M3 numeric policy version `1`; unchanged controller; ledger equals prior ledger plus imported REVOKED fingerprints |
 | ROTATE | Active predecessor; new active evidence key and/or genuinely new controller; removed active keys and replaced controller permanently fingerprint-revoked |
 | REVOKE | Strictly larger revocation set; no newly active keys; controller unchanged |
-| SUPERSEDE | Active policy changes; unchanged active fingerprints, controller and revocation set |
+| SUPERSEDE | Active policy changes; unchanged active fingerprints/controller; ledger equals prior ledger plus imported REVOKED fingerprints |
 
 Active policy IDs remain fixed. Changed policy versions increment exactly by one
 using canonical decimal integer strings. A controller-only rotation can retain the
@@ -119,3 +137,24 @@ verification, not independent security acceptance. A non-implementer must inspec
 bootstrap/pin custody, all transition invariants, old-signer selection, point checks,
 CAS races, exact canonical frames, failure paths and M3 pre-delegation gate at the
 published commit, and independently execute adversarial tests before merge.
+
+
+## Revocation-inheritance security correction
+
+The original state checker skipped REVOKED policy entries and activation required
+an unchanged ledger. A controller could therefore import a retired key without
+ledger inheritance, rotate the identical key material into an ACTIVE alias, and
+obtain qualified admission. The complete chain was reproduced with key-ID-only
+and issuer-plus-key-ID aliases, including SyntheticStore advances and real synthetic
+approval signatures. Genuine pre-fix RED: 9 failed / 48 passed. A separate false
+fingerprint regression failed before the runtime correction. Corrected focused
+suite: 58 passed. Exact commands, full regressions and revision are in the external
+correction handoff; no independent acceptance is claimed here.
+
+Tests preserve imported revocations through activation, subsequent policy changes,
+entry removal, retained-state CAS and obsolete-state rejection. A limitation test
+also deliberately restores an old state AND its matching old checkpoint with the
+same original anchor: the stateless verifier cannot detect that historical rollback.
+Authentic, durable checkpoint custody and independently established current-state
+freshness remain external responsibilities. The memory holder does not provide
+production-grade rollback resistance, persistent freshness or external custody.

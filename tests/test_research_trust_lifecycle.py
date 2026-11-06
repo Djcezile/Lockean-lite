@@ -201,3 +201,127 @@ def test_conflicting_same_sequence_and_deterministic_transition_reports():
     holder=m.SyntheticStore(state,a,m.identity(a),cp)
     assert holder.advance(p,expected_state_sha256=m.identity(state),as_of=t).status=='ACCEPTED'
     assert holder.advance(q,expected_state_sha256=m.identity(state),as_of=t).status=='REJECTED'
+
+
+def imported_revocation_fixture(inherit=True):
+    """One valid live approval key and one separately generated revoked key."""
+    m,b,controller,genesis,a,cp=fixture();t=b['as_of']
+    retired_private=Ed25519PrivateKey.generate()
+    raw=retired_private.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)
+    retired=replace(b['policy'].keys[0],key_id='retired-key',status='REVOKED',
+                    public_key_hex=raw.hex(),fingerprint=hashlib.sha256(raw).hexdigest())
+    policy=replace(b['policy'],keys=b['policy'].keys+(retired,))
+    state=replace(genesis,sequence=2,policy=policy,revoked=(retired.fingerprint,) if inherit else ())
+    cp=replace(cp,state_sha256=m.identity(genesis),sequence=1)
+    proposal=transition(m,controller,genesis,state,'ACTIVATE',a,t)
+    return m,b,controller,genesis,a,cp,retired_private,retired,state,proposal
+
+
+def resurrection(m,b,controller,state,a,retired_private,retired,rename_issuer=False):
+    alias=replace(retired,key_id='new-alias',issuer_id='alias-issuer' if rename_issuer else retired.issuer_id,status='ACTIVE')
+    nxt=replace(state,sequence=state.sequence+1,policy=replace(state.policy,version='2',keys=(state.policy.keys[0],alias)))
+    proposal=transition(m,controller,state,nxt,'ROTATE',a,b['as_of'])
+    message=b['envelope'].message
+    ctx=replace(message.context,approved_issuers=(alias.issuer_id,),
+                approvals=tuple(replace(x,issuer_id=alias.issuer_id) for x in message.context.approvals))
+    message=replace(message,key_id=alias.key_id,issuer_id=alias.issuer_id,key_fingerprint=alias.fingerprint,policy_version='2',context=ctx)
+    envelope=m.m3.sign(message,retired_private)
+    return nxt,proposal,envelope
+
+
+@pytest.mark.parametrize('rename_issuer',[False,True])
+def test_entire_imported_revocation_exploit_store_and_admission(rename_issuer):
+    m,b,key,genesis,a,cp,retired_private,retired,state,p=imported_revocation_fixture(False)
+    holder=m.SyntheticStore(genesis,a,m.identity(a),cp)
+    activation=holder.advance(p,expected_state_sha256=m.identity(genesis),as_of=b['as_of'])
+    print('activation:',activation.status,activation.reasons)
+    if activation.status=='ACCEPTED':
+        # On the vulnerable revision reproduce the entire demonstrated chain, not
+        # just state_checks: real controller signature, Store advance, M3 admission.
+        nxt,rotation,envelope=resurrection(m,b,key,state,a,retired_private,retired,rename_issuer)
+        advanced=holder.advance(rotation,expected_state_sha256=m.identity(state),as_of=b['as_of'])
+        assert advanced.status=='ACCEPTED'
+        newcp=replace(cp,state_sha256=m.identity(nxt),sequence=3)
+        admitted=m.admit(b['package'],envelope,state=nxt,anchor=a,expected_anchor_sha256=m.identity(a),checkpoint=newcp,as_of=b['as_of'])
+        print('rotation:',advanced.status,'qualified admission:',admitted.status)
+        assert admitted.status=='ADMITTED'
+    assert activation.status=='REJECTED'
+    assert 'missing_revocation_inheritance' in activation.reasons
+    assert holder._state==genesis
+
+
+def test_legitimate_activation_inherits_and_retains_revocations():
+    m,b,key,genesis,a,cp,private,retired,state,p=imported_revocation_fixture(True)
+    holder=m.SyntheticStore(genesis,a,m.identity(a),cp)
+    assert holder.advance(p,expected_state_sha256=m.identity(genesis),as_of=b['as_of']).status=='ACCEPTED'
+    assert retired.fingerprint in holder._state.revoked
+    assert holder.advance(p,expected_state_sha256=m.identity(genesis),as_of=b['as_of']).status=='REJECTED'
+
+
+@pytest.mark.parametrize('rename_issuer',[False,True])
+def test_inherited_revoked_fingerprint_cannot_reactivate_under_alias(rename_issuer):
+    m,b,key,genesis,a,cp,private,retired,state,p=imported_revocation_fixture(True)
+    cp=replace(cp,state_sha256=m.identity(state),sequence=2)
+    nxt,p,envelope=resurrection(m,b,key,state,a,private,retired,rename_issuer)
+    check(m,b,key,state,a,cp,p,'revoked_signer')
+    # Even a matching externally supplied next checkpoint cannot make an active
+    # key in the retained fingerprint ledger pass admission or delegate to M3.
+    cp=replace(cp,state_sha256=m.identity(nxt),sequence=3)
+    r=m.admit(b['package'],envelope,state=nxt,anchor=a,expected_anchor_sha256=m.identity(a),checkpoint=cp,as_of=b['as_of'])
+    assert r.status=='REJECTED' and 'revoked_signer' in r.reasons
+
+
+@pytest.mark.parametrize('action',['ROTATE','REVOKE','SUPERSEDE'])
+@pytest.mark.parametrize('inherit',[False,True])
+def test_newly_imported_revocations_in_all_policy_transitions(action,inherit):
+    m,b,key,state,a,cp=advance_fixture();t=b['as_of']
+    retired_private=Ed25519PrivateKey.generate()
+    raw=retired_private.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)
+    retired=replace(state.policy.keys[0],key_id='imported-retired',status='REVOKED',public_key_hex=raw.hex(),fingerprint=hashlib.sha256(raw).hexdigest())
+    keys=state.policy.keys+(retired,)
+    if action=='ROTATE':
+        new=Ed25519PrivateKey.generate();raw=new.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)
+        keys+=(replace(retired,key_id='genuinely-new',status='ACTIVE',public_key_hex=raw.hex(),fingerprint=hashlib.sha256(raw).hexdigest()),)
+    # REVOKE without inheritance would otherwise have no new revocation at all;
+    # an unrelated fingerprint keeps its pre-existing action rules satisfied.
+    ledger=('0'*64,) if action=='REVOKE' else ()
+    if inherit:ledger=tuple(sorted(ledger+(retired.fingerprint,)))
+    nxt=replace(state,sequence=3,policy=replace(state.policy,version='2',keys=keys),revoked=ledger)
+    r=check(m,b,key,state,a,cp,transition(m,key,state,nxt,action,a,t))
+    assert r.status==('ACCEPTED' if inherit else 'REJECTED')
+    if not inherit:assert 'missing_revocation_inheritance' in r.reasons
+
+
+def test_inconsistent_current_state_rejects_before_m3(monkeypatch):
+    m,b,key,genesis,a,cp,private,retired,state,p=imported_revocation_fixture(False)
+    cp=replace(cp,state_sha256=m.identity(state),sequence=2)
+    def forbidden(*args,**kwargs):raise AssertionError('inconsistent state reached M3')
+    monkeypatch.setattr(m.m3,'verify_admission',forbidden)
+    r=m.admit(b['package'],b['envelope'],state=state,anchor=a,expected_anchor_sha256=m.identity(a),checkpoint=cp,as_of=b['as_of'])
+    assert r.status=='REJECTED' and r.reasons==('missing_revocation_inheritance',)
+    assert m.report_bytes(r)==m.report_bytes(m.admit(b['package'],b['envelope'],state=state,anchor=a,expected_anchor_sha256=m.identity(a),checkpoint=cp,as_of=b['as_of']))
+
+
+def test_retired_history_survives_removal_and_checkpoint_replay_limit():
+    m,b,key,genesis,a,cp,private,retired,state,p=imported_revocation_fixture(True)
+    holder=m.SyntheticStore(genesis,a,m.identity(a),cp)
+    assert holder.advance(p,expected_state_sha256=m.identity(genesis),as_of=b['as_of']).status=='ACCEPTED'
+    newer=replace(state,sequence=3,policy=replace(state.policy,version='2',keys=(state.policy.keys[0],)))
+    p=transition(m,key,state,newer,'SUPERSEDE',a,b['as_of'])
+    assert holder.advance(p,expected_state_sha256=m.identity(state),as_of=b['as_of']).status=='ACCEPTED'
+    assert retired.fingerprint in holder._state.revoked
+    dropped=replace(newer,sequence=4,policy=replace(newer.policy,version='3'),revoked=())
+    p=transition(m,key,newer,dropped,'SUPERSEDE',a,b['as_of'])
+    assert holder.advance(p,expected_state_sha256=m.identity(newer),as_of=b['as_of']).status=='REJECTED'
+    oldcp=replace(cp,state_sha256=m.identity(state),sequence=2)
+    assert m.admit(b['package'],b['envelope'],state=state,anchor=a,expected_anchor_sha256=m.identity(a),checkpoint=holder._checkpoint,as_of=b['as_of']).status=='REJECTED'
+    # SAME original anchor: replacing both checkpoint and matching legitimate old
+    # state is outside freshness/custody proof, and can restore obsolete history.
+    assert m.admit(b['package'],b['envelope'],state=state,anchor=a,expected_anchor_sha256=m.identity(a),checkpoint=oldcp,as_of=b['as_of']).status=='ADMITTED'
+
+
+def test_imported_revoked_key_fingerprint_must_match_public_material():
+    m,b,key,genesis,a,cp,private,retired,state,p=imported_revocation_fixture(True)
+    false=replace(retired,fingerprint='0'*64)
+    state=replace(state,policy=replace(state.policy,keys=(state.policy.keys[0],false)),revoked=(false.fingerprint,))
+    assert 'key_identity_mismatch' in m.state_checks(state,b['as_of'])
