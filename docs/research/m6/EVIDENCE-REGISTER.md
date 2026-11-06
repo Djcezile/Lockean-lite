@@ -1,0 +1,42 @@
+# M6 evidence register
+
+All sources accessed 2026-11-06, America/New_York. Dates identify publication,
+working-paper release, or official page update where available. Verification used
+public paper text, author/institution records and publisher abstracts, and public
+provider documentation. Abstract-only sources support only claims stated in the
+available abstract or indexed publisher text. No underlying market dataset was retrieved.
+
+## Primary research
+
+| ID | Publication and date | Published result used | Transfer limitation |
+|---|---|---|---|
+| R1 | Tetlock, *Giving Content to Investor Sentiment*, Journal of Finance, 2007-05-08. [Publisher abstract](https://onlinelibrary.wiley.com/doi/10.1111/j.1540-6261.2007.01232.x) | A daily financial column's pessimism was associated with price pressure and subsequent reversal. | Aggregate daily sentiment is a different input and horizon from executable company news. |
+| R2 | von Beschwitz, Keim and Massa, *First to “Read” the News*, Federal Reserve IFDP, August 2018 landing page. [Federal Reserve paper record](https://www.federalreserve.gov/econres/ifdp/first-to-quotreadquot-the-news-new-analytics-and-algorithmic-trading.htm) | Analytics sped up price and volume response and reduced liquidity in the study. | The identification design supports a response mechanism. It supplies no Lockean latency advantage. |
+| R3 | Bernard and Thomas, *Post-Earnings-Announcement Drift: Delayed Price Response or Risk Premium?*, Journal of Accounting Research, 1989 supplement. [Journal archive](https://www.jstor.org/stable/2491062) | Historical abnormal returns continued in the surprise direction. The study examined delayed response and risk explanations. | Journal record and indexed article text were used. A mirror returned 403 on direct open. Current liquid-universe transfer needs testing. |
+| R4 | Livnat and Mendenhall, *Comparing the Post–Earnings Announcement Drift for Surprises Calculated from Analyst and Time Series Forecasts*, Journal of Accounting Research, March 2006. [Publisher record](https://doi.org/10.1111/j.1475-679X.2006.00196.x) | Drift differs with the choice of analyst or time-series expectation. | Vendor vintages, EPS definitions and publication timing affect reproduction. |
+| R5 | Moskowitz, Ooi and Pedersen, *Time Series Momentum*, Journal of Financial Economics, May 2012. [Paper](https://fairmodel.econ.yale.edu/ec439/mosk.pdf) | Own past returns predicted subsequent returns over intermediate horizons in a diversified futures and forwards sample. | An ETF long/cash design has different costs, exposure and instruments. |
+| R6 | Kim, Tse and Wald, *Time Series Momentum and Volatility Scaling*, Journal of Financial Markets, 2016. [Publisher indexed abstract](https://www.sciencedirect.com/science/article/abs/pii/S1386418116301379) | Volatility scaling can drive reported time-series momentum performance relative to simple exposure. | Publisher full-page open returned 403. Use the indexed abstract for the scaling critique only. |
+| R7 | Chordia, Goyal, Gil Sadka, Ronnie Sadka and Shivakumar, *Liquidity and the Post-Earnings-Announcement Drift*, Financial Analysts Journal, July 2009. [CFA Institute abstract](https://rpc.cfainstitute.org/research/financial-analysts-journal/2009/liquidity-and-the-post-earnings-announcement-drift) | Historical drift was stronger in illiquid stocks, where estimated costs consumed much of the paper spread. | Costs and liquidity are sample-specific. |
+| R8 | Dai, Medhat, Novy-Marx and Rizova, *Reversals and the Returns to Liquidity Provision*, February 2023 working paper, 2024 journal version. [NBER working paper PDF](https://www.nber.org/system/files/working_papers/w30917/w30917.pdf) | Volatility and turnover were associated with different reversal speeds and persistence. | Mechanism and portfolio evidence depend on universe and fill feasibility. |
+| R9 | Frazzini, Israel and Moskowitz, *Trading Costs of Asset Pricing Anomalies*, December 2012 working paper. [Author-hosted paper](https://pages.stern.nyu.edu/~afrazzin/pdf/Trading%20Cost%20of%20Asset%20Pricing%20Anomalies%20-%20Frazzini%2C%20Israel%20and%20Moskowitz.pdf) | Institutional execution data and modeled strategy costs indicate short-term reversal is especially constrained. | A single institutional execution setting cannot price Lockean costs or capacity. |
+| R10 | Gao, Han, Li and Zhou, *Market Intraday Momentum*, Journal of Financial Economics, August 2018. [Institutional abstract](https://profiles.wustl.edu/en/publications/market-intraday-momentum/) | The return from prior close to first half-hour end predicted the final half-hour in a historical ETF sample. | Regime-dependent result. Later fill and modern cost evidence are needed. |
+| R11 | Baltussen, Da, Lammers and Martens, *Hedging Demand and Market Intraday Momentum*, Journal of Financial Economics, online May 2021. [Article copy](https://academicweb.nd.edu/~zda/intramom.pdf) | A broader previous-close-to-pre-close return had predictive power in futures, with evidence for hedging demand and differences from the early-window ETF result. | Different predictor and instruments. Treat as mechanism evidence and a replication caution. |
+
+## Official data documentation
+
+| ID | Source and publication/update date | Verified documentation claim | Outstanding limitation |
+|---|---|---|---|
+| D1 | SEC EDGAR API overview, updated 2025-04-08. [SEC API documentation](https://www.sec.gov/search-filings/edgar-application-programming-interfaces) | Documents submission and extracted XBRL APIs and updates as filings disseminate. | A filing is neither necessarily the first issuer release nor a measure of actual historical receipt. |
+| D2 | SEC webmaster FAQ, page date unverified. [SEC timing and access FAQ](https://www.sec.gov/about/webmaster-frequently-asked-questions) | Distinguishes EDGAR acceptance from public availability and describes variable delay. | Establish separately evidenced availability and applicable fair-access and reuse conditions. |
+| D3 | LSEG news catalogue, page date unverified. [LSEG product documentation](https://www.lseg.com/en/data-catalogue/news) | Advertises machine-readable news and historical archives. | Exact revision/receipt fields, coverage, model rights and quote remain UNKNOWN. |
+| D4 | LSEG data for quant research brochure, publication date unverified. [LSEG brochure](https://www.lseg.com/content/dam/data-analytics/en_us/documents/brochures/lseg-data-for-quant-research-brochure.pdf) | Describes I/B/E/S Point-in-Time daily snapshots and distinct delivery products. | Daily snapshots alone cannot prove intraday availability. Exact entitlements, historical vintages and costs remain UNKNOWN. |
+| D5 | Databento data catalogue, publication date unverified. [Product catalogue guide](https://databento.com/docs/portal/data-catalog) | Describes schema, history, instrument, licensing and estimated pricing metadata. | Product, date range, venues, delay and intended use still require confirmation. |
+| D6 | Databento usage pricing and live data guide, publication dates unverified. [Usage pricing](https://databento.com/docs/faqs/usage-pricing-and-data-credits), [Live licensing guide](https://databento.com/docs/portal/live-data) | Describes historical byte metering and distinct live display, non-display and distribution categories. | Neither guide fixes a cost or grants rights for this project. |
+| D7 | Databento corporate actions, publication date unverified. [Corporate actions documentation](https://databento.com/corporate-actions) | Advertises point-in-time updates and internal display and non-display use. The page excludes external redistribution by file or API. | Verify applicable version, effective and availability fields, closures, corrections, coverage and exact agreement. |
+| D8 | Databento timestamping guide, publication date unverified. [Timestamping guide](https://databento.com/docs/architecture/timestamping-guide) | Distinguishes vendor capture from event timestamps and describes accuracy limits. | Vendor receipt is not proof of local receipt or availability at a particular decision. |
+
+The table records documentation claims and published historical findings. Candidate
+mechanisms, score levels, likely workload and capacity implications are M6 judgments.
+Current edge, complete provenance, negotiated rights, fills, and acquisition and
+operating costs are unresolved. Page dates marked unverified were unavailable in
+the reviewed material. Search snippets from unrelated sources were excluded.
