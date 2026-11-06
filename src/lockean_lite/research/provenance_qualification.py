@@ -513,10 +513,13 @@ def qualify(package, *, raw_bytes, checkpoint, expected_checkpoint_sha256, as_of
     intent_hash = identity(intended_use) if _intent(intended_use) else None
     if intent_hash is None:
         rejected.add("invalid_intended_use")
+    actual_raw_sha256 = None
     if raw_bytes is None:
         missing.add("raw_bytes_missing")
     elif type(raw_bytes) is not bytes or not 0 < len(raw_bytes) <= _MAX_RAW_BYTES:
         rejected.add("invalid_raw_bytes")
+    else:
+        actual_raw_sha256 = sha256(raw_bytes).hexdigest()
 
     if valid_package:
         facts = package.facts
@@ -529,8 +532,8 @@ def qualify(package, *, raw_bytes, checkpoint, expected_checkpoint_sha256, as_of
             missing.add("approval_reference_missing")
         if package.policy_reference is None:
             missing.add("policy_reference_missing")
-        if (type(raw_bytes) is bytes and 0 < len(raw_bytes) <= _MAX_RAW_BYTES
-                and facts.raw_sha256 is not None and sha256(raw_bytes).hexdigest() != facts.raw_sha256):
+        if (actual_raw_sha256 is not None and facts.raw_sha256 is not None
+                and actual_raw_sha256 != facts.raw_sha256):
             rejected.add("raw_digest_mismatch")
         _lineage(facts, rejected)
         _chronology(facts, package.intent, at, chronology_errors, chronology_missing)
@@ -541,6 +544,10 @@ def qualify(package, *, raw_bytes, checkpoint, expected_checkpoint_sha256, as_of
                 rejected.add("policy_reference_mismatch")
             entry = _match(facts, current, rejected, missing)
             if entry is not None:
+                trusted_raw_sha256 = entry.facts.raw_sha256
+                if (actual_raw_sha256 is not None and trusted_raw_sha256 is not None
+                        and actual_raw_sha256 != trusted_raw_sha256):
+                    rejected.add("raw_digest_mismatch")
                 _compare_claims(facts, entry.facts, ((("source", "product"), "source_mismatch"),),
                                 source_errors, source_missing)
                 _bound_entry(package, entry, current, at, rejected, missing,

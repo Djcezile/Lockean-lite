@@ -66,6 +66,14 @@ binds successive digest links and an authorized actor per step. An empty tuple
 means no transformation. The gate does not execute a transform or attest
 output bytes beyond the digests covered by the registry.
 
+For a matched entry in a valid pinned checkpoint, the gate compares the actual
+bounded raw bytes directly with the entry's digest. A mismatch yields
+`REJECTED` with `raw_digest_mismatch`, even when the submitted digest is
+missing. A missing declaration still withholds qualification when the bytes
+match. Absent raw bytes are missing evidence. An absent trusted digest, an
+unmatched reference, or an unusable checkpoint cannot establish byte integrity.
+A digest declared in the package can support a consistency check only.
+
 ## Rights and point-in-time policy
 
 The independently pinned grant identifies its issuer, agreement/version,
@@ -95,6 +103,14 @@ known evidence times and the decision must avoid October 20 through December 31,
 2026, inclusive. This also rejects spans that straddle the protected period.
 Evaluation and rights metadata are administrative timestamps outside that
 observation-span test. Boundary tests use only generated timestamps.
+
+The historical decision time bounds the information usable in the synthetic
+study. An approval issued after that decision may authorize a retrospective
+synthetic evaluation. A later checkpoint records the synthetic assertions
+accepted at its own observation time. The gate evaluates that checkpoint at
+the explicit evaluation time. Neither later artifact proves it was available
+at the historical decision time. Real-world point-in-time provenance remains
+`UNVERIFIED`.
 
 ## Audit and outcome
 
