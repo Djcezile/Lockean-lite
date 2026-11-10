@@ -67,7 +67,9 @@ through December 31, 2026, inclusive, in America/New_York.
 
 Check requested rights, including non-display, commercial use if requested,
 separate raw/derived retention, reviewer access and redistribution if requested.
-Rights must cover checkpoint observation and evaluation. A quote exceeding
+Rights must cover checkpoint observation and evaluation. Retention dates are
+inclusive New York calendar dates. The grant's exclusive expiry must be at
+or after the midnight following the last granted retention date. A quote exceeding
 any known component or the aggregate cap blocks even if another component is
 unknown. A synthetic review cannot predate frozen coverage or follow checkpoint
 observation, and must bind the exact study, dataset and reviewer.
