@@ -117,6 +117,12 @@ $watchdogAction = New-ScheduledTaskAction -Execute $powerShellPath -Argument ('-
 $weekdays = @('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday')
 $dailyTrigger = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek $weekdays -At $config.daily_start
 $watchdogTrigger = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek $weekdays -At $config.watchdog_start
+# The cmdlet supplies a fixed UTC boundary by default. Use Eastern wall time.
+$triggerDate = [datetime]::Today.ToString('yyyy-MM-dd', [cultureinfo]::InvariantCulture)
+$dailyBoundary = "${triggerDate}T$($config.daily_start):00"
+$watchdogBoundary = "${triggerDate}T$($config.watchdog_start):00"
+$dailyTrigger.StartBoundary = $dailyBoundary
+$watchdogTrigger.StartBoundary = $watchdogBoundary
 $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 9) `
     -MultipleInstances IgnoreNew `
@@ -135,6 +141,18 @@ try {
     if ($null -eq (Get-ScheduledTask -TaskName $dailyName -ErrorAction Stop) -or
         $null -eq (Get-ScheduledTask -TaskName $watchdogName -ErrorAction Stop)) {
         throw 'registered_task_verification_failed'
+    }
+
+    foreach ($expected in @(
+        @{ Name = $dailyName; Boundary = $dailyBoundary }
+        @{ Name = $watchdogName; Boundary = $watchdogBoundary }
+    )) {
+        [xml]$registered = Export-ScheduledTask -TaskName $expected.Name
+        $triggers = $registered.SelectNodes("/*[local-name()='Task']/*[local-name()='Triggers']/*")
+        if ($triggers.Count -ne 1 -or $triggers[0].LocalName -cne 'CalendarTrigger' -or
+            $triggers[0].StartBoundary -cne $expected.Boundary) {
+            throw 'registered_task_wall_clock_boundary_mismatch'
+        }
     }
 } catch {
     if ($null -ne $dailyBackup) {

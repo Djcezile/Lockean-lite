@@ -1,5 +1,12 @@
+from datetime import date, datetime
+from functools import cache
 import json
 from pathlib import Path
+import shutil
+import subprocess
+from zoneinfo import ZoneInfo
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,3 +73,56 @@ def test_push_setup_generates_private_ntfy_topic_and_uses_dpapi():
     assert "Export-Clixml" in text
     assert "Set-Clipboard" in text
     assert "notification-endpoint.xml" in text
+
+
+@cache
+def _installer_trigger_boundaries():
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if powershell is None:
+        pytest.skip("PowerShell is required for offline installer fragment tests")
+    installer = (OPS / "Install-LockeanLiteAutomation.ps1").read_text(encoding="utf-8")
+    # Execute just the trigger construction with a mock for the native cmdlet.
+    # The mock reproduces the observed Windows cmdlet's UTC serialization.
+    start = installer.index("$weekdays = ")
+    end = installer.index("$settings =", start)
+    script = r"""
+$ErrorActionPreference = 'Stop'
+function New-ScheduledTaskTrigger {
+    param([switch]$Weekly, [int]$WeeksInterval, [string[]]$DaysOfWeek, [datetime]$At)
+    if (-not $Weekly -or $WeeksInterval -ne 1 -or
+        ($DaysOfWeek -join ',') -ne 'Monday,Tuesday,Wednesday,Thursday,Friday') {
+        throw 'unexpected trigger cadence'
+    }
+    $local = [datetime]::new(2026, 10, 29, $At.Hour, $At.Minute, 0)
+    $utc = [datetimeoffset]::new($local, [timespan]::FromHours(-4)).UtcDateTime
+    [pscustomobject]@{ StartBoundary = $utc.ToString('s') + 'Z' }
+}
+$config = @{ daily_start = '09:15'; watchdog_start = '09:20' }
+""" + installer[start:end] + r"""
+@{ daily = $dailyTrigger.StartBoundary; watchdog = $watchdogTrigger.StartBoundary } |
+    ConvertTo-Json -Compress
+"""
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True, text=True, check=True, timeout=20,
+    )
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize(("name", "expected"), [("daily", "09:15"), ("watchdog", "09:20")])
+@pytest.mark.parametrize(("before", "after"), [
+    (date(2026, 3, 6), date(2026, 3, 9)),
+    (date(2026, 10, 30), date(2026, 11, 2)),
+])
+def test_weekly_triggers_preserve_new_york_wall_clock(name, expected, before, after):
+    boundary = datetime.fromisoformat(_installer_trigger_boundaries()[name])
+    eastern = ZoneInfo("America/New_York")
+
+    def local_clock(day):
+        occurrence = datetime.combine(day, boundary.timetz())
+        if occurrence.tzinfo is not None:
+            occurrence = occurrence.astimezone(eastern)
+        return occurrence.strftime("%H:%M")
+
+    assert (local_clock(before), local_clock(after)) == (expected, expected)
+    assert boundary.tzinfo is None

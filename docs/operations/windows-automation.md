@@ -171,8 +171,11 @@ Only after all four pass does it write
 
 Activation backs up any existing task XML, registers
 `LockeanLite-DailyPaper` at 09:15 ET and `LockeanLite-Watchdog` at 09:20 ET,
-then reads both tasks back. If either registration fails, the installer
-restores the prior task definitions (or removes only a newly created task).
+then checks the registered calendar triggers. Both use weekday local
+wall-clock boundaries without a UTC offset, so Task Scheduler follows the
+host's Eastern daylight-saving changes. If registration or the boundary
+check fails, the installer restores the prior task definitions (or removes
+only a newly created task).
 The receipt also binds the repository path and SHA-256 of the staged
 configuration, so a receipt cannot authorize a silently changed target.
 
@@ -188,6 +191,13 @@ Get-ScheduledTaskInfo -TaskName 'LockeanLite-DailyPaper' |
 Get-ScheduledTaskInfo -TaskName 'LockeanLite-Watchdog' |
   Select-Object LastRunTime, LastTaskResult, NextRunTime
 ```
+
+Confirm that the host uses Eastern time with automatic daylight-saving
+adjustment enabled. In each `Export-ScheduledTask` result, check the
+`CalendarTrigger` weekday schedule and its `StartBoundary`. The daily
+boundary must end in `T09:15:00` and the watchdog boundary in `T09:20:00`,
+with no UTC designator or numeric offset. Compare the next-run times above
+in the host's local time.
 
 The tasks use `WakeToRun`, `StartWhenAvailable`, a nine-hour execution limit,
 and `IgnoreNew` overlap behavior. `StartWhenAvailable` does not weaken the
