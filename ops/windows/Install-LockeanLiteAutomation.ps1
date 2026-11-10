@@ -117,6 +117,12 @@ $watchdogAction = New-ScheduledTaskAction -Execute $powerShellPath -Argument ('-
 $weekdays = @('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday')
 $dailyTrigger = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek $weekdays -At $config.daily_start
 $watchdogTrigger = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek $weekdays -At $config.watchdog_start
+# The cmdlet supplies a fixed UTC boundary by default. Use Eastern wall time.
+$triggerDate = [datetime]::Today.ToString('yyyy-MM-dd', [cultureinfo]::InvariantCulture)
+$dailyBoundary = "${triggerDate}T$($config.daily_start):00"
+$watchdogBoundary = "${triggerDate}T$($config.watchdog_start):00"
+$dailyTrigger.StartBoundary = $dailyBoundary
+$watchdogTrigger.StartBoundary = $watchdogBoundary
 $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 9) `
     -MultipleInstances IgnoreNew `
@@ -135,6 +141,54 @@ try {
     if ($null -eq (Get-ScheduledTask -TaskName $dailyName -ErrorAction Stop) -or
         $null -eq (Get-ScheduledTask -TaskName $watchdogName -ErrorAction Stop)) {
         throw 'registered_task_verification_failed'
+    }
+
+    foreach ($expected in @(
+        @{ Name = $dailyName; Boundary = $dailyBoundary }
+        @{ Name = $watchdogName; Boundary = $watchdogBoundary }
+    )) {
+        [xml]$registered = Export-ScheduledTask -TaskName $expected.Name
+        $ns = [System.Xml.XmlNamespaceManager]::new($registered.NameTable)
+        $ns.AddNamespace('t', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
+        $triggers = $registered.SelectNodes('/t:Task/t:Triggers/*', $ns)
+        $calendar = $registered.SelectSingleNode('/t:Task/t:Triggers/t:CalendarTrigger', $ns)
+        if ($triggers.Count -ne 1 -or $null -eq $calendar) {
+            throw 'registered_task_wall_clock_boundary_mismatch'
+        }
+        $boundaries = $calendar.SelectNodes('t:StartBoundary', $ns)
+        if ($boundaries.Count -ne 1 -or $boundaries[0].SelectNodes('*|@*').Count -ne 0 -or
+            $boundaries[0].InnerText -cne $expected.Boundary) {
+            throw 'registered_task_wall_clock_boundary_mismatch'
+        }
+
+        $schedules = $calendar.SelectNodes("*[starts-with(local-name(), 'ScheduleBy')]", $ns)
+        $weekly = $calendar.SelectSingleNode('t:ScheduleByWeek[not(@*) and not(text()[normalize-space()])]', $ns)
+        if ($schedules.Count -ne 1 -or $null -eq $weekly -or $weekly.SelectNodes('*').Count -ne 2) {
+            throw 'registered_task_weekday_schedule_mismatch'
+        }
+        $interval = $weekly.SelectSingleNode('t:WeeksInterval[not(*) and not(@*)]', $ns)
+        $days = $weekly.SelectSingleNode('t:DaysOfWeek[not(@*) and not(text()[normalize-space()])]', $ns)
+        if ($null -eq $interval -or $interval.InnerText.Trim() -cne '1' -or $null -eq $days) {
+            throw 'registered_task_weekday_schedule_mismatch'
+        }
+        $dayNames = @($days.SelectNodes('t:*[not(*) and not(@*) and not(normalize-space())]', $ns) |
+            ForEach-Object { $_.LocalName })
+        if ($days.SelectNodes('*').Count -ne $weekdays.Count -or $dayNames.Count -ne $weekdays.Count -or
+            (Compare-Object -ReferenceObject $weekdays -DifferenceObject $dayNames -CaseSensitive)) {
+            throw 'registered_task_weekday_schedule_mismatch'
+        }
+
+        # Task Scheduler defaults both the trigger and the task to enabled.
+        foreach ($enabledPath in @(
+            '/t:Task/t:Triggers/t:CalendarTrigger/t:Enabled'
+            '/t:Task/t:Settings/t:Enabled'
+        )) {
+            $enabled = $registered.SelectNodes($enabledPath, $ns)
+            if ($enabled.Count -gt 1 -or ($enabled.Count -eq 1 -and
+                ($enabled[0].SelectNodes('*|@*').Count -ne 0 -or $enabled[0].InnerText.Trim() -cnotin @('true', '1')))) {
+                throw 'registered_task_disabled_or_invalid_enabled'
+            }
+        }
     }
 } catch {
     if ($null -ne $dailyBackup) {
