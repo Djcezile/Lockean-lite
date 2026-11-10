@@ -467,3 +467,24 @@ def test_partial_exact_class_records_fail_closed_deterministically(target, reaso
     assert report.status == "BLOCKED"
     assert reason in report.reasons
     assert m.report_bytes(report) == m.report_bytes(m.qualify(study, data, **args))
+
+
+@pytest.mark.parametrize("scope", ["raw", "derived"])
+@pytest.mark.parametrize(("minute_delta", "expected"), [
+    (-1, "BLOCKED"),
+    (0, "ELIGIBLE_FOR_REVIEW"),
+    (1, "ELIGIBLE_FOR_REVIEW"),
+])
+def test_retention_requires_rights_through_new_york_day(scope, minute_delta, expected):
+    study, data, checkpoint = fixture()
+    last_day = date(2026, 8, 1)
+    study = replace(study, **{f"retain_{scope}_until": last_day,
+                              f"retain_{'derived' if scope == 'raw' else 'raw'}_until": date(2026, 7, 1)})
+    grant = replace(checkpoint.rights, raw_until=study.retain_raw_until,
+                    derived_until=study.retain_derived_until,
+                    valid_until=utc(last_day + timedelta(days=1), 0) + timedelta(minutes=minute_delta))
+    checkpoint = rebind(study, data, replace(checkpoint, rights=grant))
+
+    report = run(study, data, checkpoint)
+    assert report.status == expected
+    assert ("retention_conflict" in report.reasons) is (expected == "BLOCKED")

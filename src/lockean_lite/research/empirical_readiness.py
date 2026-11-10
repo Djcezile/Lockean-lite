@@ -605,7 +605,7 @@ def _rights(grant, study, known, checkpoint, at, blocked, missing):
     elif grant.reviewer != study.reviewer or grant.reviewer in checkpoint.revoked:
         blocked.add("reviewer_access_mismatch")
     if (study.retain_raw_until > grant.raw_until or study.retain_derived_until > grant.derived_until
-            or max(grant.raw_until, grant.derived_until) > _day(grant.valid_until)):
+            or max(grant.raw_until, grant.derived_until) >= _day(grant.valid_until)):
         blocked.add("retention_conflict")
 
 
