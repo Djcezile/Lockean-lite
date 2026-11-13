@@ -128,6 +128,29 @@ function New-LockeanTaskXml {
 "@
 }
 
+function Get-LockeanEnabledFlag {
+    param([xml]$Definition, [string]$Path)
+    $ns = [Xml.XmlNamespaceManager]::new($Definition.NameTable)
+    $ns.AddNamespace('t', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
+    $nodes = $Definition.SelectNodes($Path, $ns)
+    if ($nodes.Count -eq 0) { return $true }
+    if ($nodes.Count -ne 1 -or $nodes[0].SelectNodes('*|@*').Count -ne 0 -or
+        $nodes[0].InnerText.Trim() -cnotin @('true', '1', 'false', '0')) {
+        throw 'task_enabled_state_invalid'
+    }
+    return $nodes[0].InnerText.Trim() -cin @('true', '1')
+}
+
+function Assert-LockeanTaskWindow {
+    param($Task, [datetime]$Now)
+    if ($Task.TaskEnabled -and $Task.TriggerEnabled) {
+        $start = [datetime]::ParseExact($Task.Boundary, "yyyy-MM-dd'T'HH:mm:ss", [cultureinfo]::InvariantCulture)
+        if ($start -le $Now.AddMinutes(30)) {
+            throw 'enabled_task_execution_imminent_or_boundary_elapsed'
+        }
+    }
+}
+
 function Invoke-LockeanTaskInstallation {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)]$Session)
@@ -141,20 +164,25 @@ function Invoke-LockeanTaskInstallation {
         $weekdays = @('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday')
         $dailyTrigger = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek $weekdays -At $config.daily_start
         $watchdogTrigger = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek $weekdays -At $config.watchdog_start
-        # Offset-free boundaries follow the host's Eastern wall clock across DST.
-        $triggerDate = [datetime]::Today.ToString('yyyy-MM-dd', [cultureinfo]::InvariantCulture)
-        $dailyBoundary = "${triggerDate}T$($config.daily_start):00"
-        $watchdogBoundary = "${triggerDate}T$($config.watchdog_start):00"
-        $dailyTrigger.StartBoundary = $dailyBoundary
-        $watchdogTrigger.StartBoundary = $watchdogBoundary
+        # Use the next future weekday occurrence, never a missed start from earlier today.
+        $now = $Session.CurrentTime
+        foreach ($clock in @(
+            @{ Trigger = $dailyTrigger; Time = $config.daily_start }
+            @{ Trigger = $watchdogTrigger; Time = $config.watchdog_start }
+        )) {
+            $next = $now.Date.Add([timespan]::Parse($clock.Time, [cultureinfo]::InvariantCulture))
+            if ($next -le $now) { $next = $next.AddDays(1) }
+            while ($next.DayOfWeek -in @([DayOfWeek]::Saturday, [DayOfWeek]::Sunday)) {
+                $next = $next.AddDays(1)
+            }
+            $clock.Trigger.StartBoundary = $next.ToString("yyyy-MM-dd'T'HH:mm:ss", [cultureinfo]::InvariantCulture)
+        }
+        $dailyBoundary = $dailyTrigger.StartBoundary
+        $watchdogBoundary = $watchdogTrigger.StartBoundary
         $snapshots = foreach ($plan in @(
             @{ Name = $dailyName; Boundary = $dailyTrigger.StartBoundary; Logon = 'Password'; Script = 'Run-LockeanLite.ps1' }
             @{ Name = $watchdogName; Boundary = $watchdogTrigger.StartBoundary; Logon = 'InteractiveToken'; Script = 'Watch-LockeanLite.ps1' }
         )) {
-            $startTime = [datetime]::ParseExact($plan.Boundary, "yyyy-MM-dd'T'HH:mm:ss", [cultureinfo]::InvariantCulture)
-            if ($startTime -le $Session.CurrentTime.AddMinutes(30)) {
-                throw 'activation_window_too_close_or_start_already_passed'
-            }
             $original = $Session.ReadXml($plan.Name)
             $security = $null
             if ($original) {
@@ -177,10 +205,14 @@ function Invoke-LockeanTaskInstallation {
             }
             $user = [string]$definition.Task.Principals.Principal.UserId
             if ([string]::IsNullOrWhiteSpace($user)) { throw 'task_principal_missing' }
-            [pscustomobject]@{
+            $snapshot = [pscustomobject]@{
                 Name = $plan.Name; Boundary = $plan.Boundary; Xml = $original
                 Security = $security; Desired = $definition.OuterXml; User = $user; Logon = $plan.Logon
+                TaskEnabled = (Get-LockeanEnabledFlag $definition '/t:Task/t:Settings/t:Enabled')
+                TriggerEnabled = (Get-LockeanEnabledFlag $definition '/t:Task/t:Triggers/t:CalendarTrigger/t:Enabled')
             }
+            Assert-LockeanTaskWindow -Task $snapshot -Now $Session.CurrentTime
+            $snapshot
         }
         # Both recovery snapshots are persisted before credential entry or task mutation.
         $backupSuffix = (Get-Date -Format yyyyMMdd_HHmmss) + '_' + [guid]::NewGuid().ToString('N')
@@ -198,6 +230,7 @@ function Invoke-LockeanTaskInstallation {
             $Session.Validate($snapshot.Name, $snapshot.Desired, $snapshot.Security)
         }
         foreach ($snapshot in $snapshots) {
+            Assert-LockeanTaskWindow -Task $snapshot -Now $Session.CurrentTime
             # Refuse concurrent changes rather than overwriting another operator's work.
             if ($Session.ReadXml($snapshot.Name) -cne $snapshot.Xml) { throw 'task_changed_after_preflight' }
             if ($snapshot.Xml) {
@@ -230,10 +263,7 @@ function Invoke-LockeanTaskInstallation {
                 throw 'registered_task_security_mismatch'
             }
         }
-        foreach ($expected in @(
-            @{ Name = $dailyName; Boundary = $dailyBoundary }
-            @{ Name = $watchdogName; Boundary = $watchdogBoundary }
-        )) {
+        foreach ($expected in $snapshots) {
             [xml]$registered = $Session.ReadXml($expected.Name)
             $ns = [System.Xml.XmlNamespaceManager]::new($registered.NameTable)
             $ns.AddNamespace('t', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
@@ -265,15 +295,12 @@ function Invoke-LockeanTaskInstallation {
                 throw 'registered_task_weekday_schedule_mismatch'
             }
 
-            # Task Scheduler defaults both the trigger and the task to enabled.
-            foreach ($enabledPath in @(
-                '/t:Task/t:Triggers/t:CalendarTrigger/t:Enabled'
-                '/t:Task/t:Settings/t:Enabled'
+            foreach ($flag in @(
+                @{ Path = '/t:Task/t:Triggers/t:CalendarTrigger/t:Enabled'; Expected = $expected.TriggerEnabled }
+                @{ Path = '/t:Task/t:Settings/t:Enabled'; Expected = $expected.TaskEnabled }
             )) {
-                $enabled = $registered.SelectNodes($enabledPath, $ns)
-                if ($enabled.Count -gt 1 -or ($enabled.Count -eq 1 -and
-                    ($enabled[0].SelectNodes('*|@*').Count -ne 0 -or $enabled[0].InnerText.Trim() -cnotin @('true', '1')))) {
-                    throw 'registered_task_disabled_or_invalid_enabled'
+                if ((Get-LockeanEnabledFlag $registered $flag.Path) -ne $flag.Expected) {
+                    throw 'registered_task_enabled_state_mismatch'
                 }
             }
         }

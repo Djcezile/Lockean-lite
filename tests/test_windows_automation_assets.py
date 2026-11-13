@@ -99,6 +99,7 @@ function New-ScheduledTaskTrigger {
     [pscustomobject]@{ StartBoundary = $utc.ToString('s') + 'Z' }
 }
 $config = @{ daily_start = '09:15'; watchdog_start = '09:20' }
+$Session = [pscustomobject]@{ CurrentTime = [datetime]::new(2026, 10, 29, 6, 0, 0) }
 """ + installer[start:end] + r"""
 @{ daily = $dailyTrigger.StartBoundary; watchdog = $watchdogTrigger.StartBoundary } |
     ConvertTo-Json -Compress
@@ -150,7 +151,7 @@ _TRIGGER_ENABLED = "<Enabled>true</Enabled>"
     pytest.param("<Settings><Enabled>true", "<Settings><Enabled>false",
                  False, id="disabled-task"),
     pytest.param(_TRIGGER_ENABLED, "", True, id="default-trigger-enabled"),
-    pytest.param("<Settings><Enabled>true</Enabled></Settings>", "<Settings/>",
+    pytest.param("<Settings><Enabled>true</Enabled>", "<Settings>",
                  True, id="default-task-enabled"),
     pytest.param(_TRIGGER_ENABLED, "<Enabled>1</Enabled>", True, id="numeric-true"),
     pytest.param(_TRIGGER_ENABLED, "<Enabled>0</Enabled>", False, id="numeric-false"),
@@ -167,8 +168,11 @@ _TRIGGER_ENABLED = "<Enabled>true</Enabled>"
     pytest.param(_WEEK, _WEEK + "<ScheduleByDay/>", False, id="mixed-recurrence"),
 ])
 def test_installer_validates_registered_schedule_and_rolls_back(old, new, accepted):
-    mutation = {"old": old, "new": new} if old else {"old": "unchanged-sentinel", "new": ""}
-    actual = _run_installation_scenario("tampered-readback", mutation)
+    if old:
+        actual = _run_installation_scenario("tampered-readback", {"old": old, "new": new})
+        assert actual["mutationApplied"]
+    else:
+        actual = _run_installation_scenario("valid")
     assert bool(actual["failure"]) is (not accepted)
     if not accepted:
         assert actual["events"][-2:] == ["restore:watchdog", "restore:daily"]
@@ -195,7 +199,7 @@ def _run_installation_scenario(scenario, mutation=None):
 
 @pytest.mark.parametrize("scenario", [
     "permission", "missing-credential", "incorrect-credential",
-    "invalid-recovery", "running", "wrong-logon", "late-window",
+    "invalid-recovery", "running", "wrong-logon", "late-window", "imminent-enabled", "window-advanced",
 ])
 def test_installation_preflight_rejects_before_any_task_write(scenario):
     actual = _run_installation_scenario(scenario)
@@ -250,8 +254,8 @@ def test_native_adapter_password_registration_restoration_and_error_redaction():
     assert result.returncode == 0, result.stderr
     assert "SYNTHETIC_PASSWORD_ONLY" not in result.stdout + result.stderr
     assert json.loads(result.stdout) == {
-        "authenticated": True, "calls": 4, "hresult": -2147023570,
-        "sanitized": True, "disposed": True, "accessChecks": True,
+        "authenticated": True, "calls": 5, "hresult": -2147023570,
+        "sanitized": True, "disposed": True, "accessChecks": True, "windowChecks": True,
     }
 
 
@@ -261,3 +265,45 @@ def test_fresh_daily_uses_password_and_authentication():
     assert actual["failure"] == ""
     assert "<LogonType>Password</LogonType>" in actual["definitions"]["daily"]
     assert actual["events"].index("authenticate") < actual["events"].index("write:daily")
+
+
+
+@pytest.mark.parametrize("scenario", [
+    "disabled-morning", "disabled-afternoon",
+    "trigger-disabled-afternoon", "mixed-afternoon",
+])
+def test_existing_disabled_states_survive_safe_maintenance(scenario):
+    from xml.etree import ElementTree
+
+    actual = _run_installation_scenario(scenario)
+    assert actual["failure"] == ""
+    assert actual["preserved"]
+    assert actual["rollback"] == []
+    for name, xml in actual["definitions"].items():
+        root = ElementTree.fromstring(xml)
+        task = root.find(f"{{{_TASK_NS}}}Settings/{{{_TASK_NS}}}Enabled").text
+        trigger = root.find(
+            f"{{{_TASK_NS}}}Triggers/{{{_TASK_NS}}}CalendarTrigger/{{{_TASK_NS}}}Enabled"
+        ).text
+        assert task == ("true" if scenario == "trigger-disabled-afternoon" or
+                       (scenario == "mixed-afternoon" and name == "watchdog") else "false")
+        assert trigger == ("false" if scenario == "trigger-disabled-afternoon" else "true")
+        boundary = root.find(
+            f"{{{_TASK_NS}}}Triggers/{{{_TASK_NS}}}CalendarTrigger/{{{_TASK_NS}}}StartBoundary"
+        ).text
+        assert datetime.fromisoformat(boundary) > datetime(2026, 11, 13, 6 if scenario == "disabled-morning" else 15)
+
+
+def test_disabled_afternoon_partial_failure_restores_both_originals():
+    actual = _run_installation_scenario("disabled-partial")
+    assert "synthetic_activation_failure" in actual["failure"]
+    assert actual["events"][-2:] == ["restore:watchdog", "restore:daily"]
+    assert actual["preserved"]
+    assert actual["rollback"] == []
+
+
+def test_disabled_task_cannot_be_enabled_during_readback():
+    actual = _run_installation_scenario("disabled-readback-enabled")
+    assert actual["failure"]
+    assert actual["events"][-2:] == ["restore:watchdog", "restore:daily"]
+    assert actual["preserved"]

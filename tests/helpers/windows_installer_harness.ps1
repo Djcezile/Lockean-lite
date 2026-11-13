@@ -13,11 +13,12 @@ class SyntheticSession {
     [hashtable]$Definitions=@{}
     [hashtable]$Originals=@{}
     [Collections.Generic.List[string]]$Events=[Collections.Generic.List[string]]::new()
-    [datetime]$CurrentTime=[datetime]::Today.AddHours(6)
+    [datetime]$CurrentTime=[datetime]::new(2026,11,13,6,0,0)
     [string]$CurrentUser='synthetic-user'
     [string]$Scenario
     [string]$Mutation
     [bool]$Disposed=$false
+    [bool]$MutationApplied=$false
     [void]CheckPermissions(){
         $this.Events.Add('permissions')
         if($this.Scenario -eq 'permission'){throw 'task_management_elevation_required'}
@@ -29,6 +30,7 @@ class SyntheticSession {
     }
     [void]RequireIdle([string]$name){
         if($this.Scenario -eq 'running'){throw 'task_running'}
+        if($this.Scenario -eq 'imminent-enabled' -and $name -eq 'watchdog'){throw 'enabled_task_execution_imminent'}
     }
     [string]ReadSecurity([string]$name){return 'synthetic-security'}
     [bool]SecurityMatches([string]$name,[string]$expected){
@@ -37,6 +39,7 @@ class SyntheticSession {
     [string]NormalizeXml([string]$xml){return $xml}
     [void]Authenticate([string]$user){
         $this.Events.Add('authenticate')
+        if($this.Scenario -eq 'window-advanced'){$this.CurrentTime=[datetime]::new(2026,11,13,9,16,0)}
         if($this.Scenario -in @('missing-credential','incorrect-credential')){throw 'task_authentication_failed'}
     }
     [void]Validate([string]$name,[string]$xml,[string]$security){
@@ -53,11 +56,16 @@ class SyntheticSession {
         }
         $this.Events.Add('write:'+ $name)
         $this.Definitions[$name]=$xml
+        if($this.Scenario -eq 'disabled-readback-enabled' -and $name -eq 'watchdog'){
+            $this.Definitions[$name]=$xml.Replace('<Settings><Enabled>false','<Settings><Enabled>true')
+        }
         if($this.Scenario -eq 'tampered-readback' -and $name -eq 'watchdog'){
             $parts=$this.Mutation|ConvertFrom-Json
-            $this.Definitions[$name]=$xml.Replace(" />","/>").Replace([string]$parts.old,[string]$parts.new)
+            $normalized=$xml.Replace(" />","/>")
+            $this.MutationApplied=$normalized.Contains([string]$parts.old)
+            $this.Definitions[$name]=$normalized.Replace([string]$parts.old,[string]$parts.new)
         }
-        if($this.Scenario -in @('partial','rollback-fails','both-rollbacks-fail','new-task-partial') -and $name -eq 'watchdog'){
+        if($this.Scenario -in @('partial','rollback-fails','both-rollbacks-fail','new-task-partial','disabled-partial') -and $name -eq 'watchdog'){
             throw 'synthetic_activation_failure'
         }
     }
@@ -74,11 +82,25 @@ function New-ScheduledTaskTrigger {
 $ApprovedCommit='synthetic-approved'
 $session=[SyntheticSession]::new()
 $session.Scenario=$Scenario
-if($Scenario -eq 'late-window'){$session.CurrentTime=[datetime]::Today.AddHours(9)}
+if($Scenario -eq 'late-window'){$session.CurrentTime=[datetime]::new(2026,11,13,9,0,0)}
+if($Scenario -in @('disabled-afternoon','trigger-disabled-afternoon','mixed-afternoon','disabled-partial','disabled-readback-enabled','imminent-enabled')){
+    $session.CurrentTime=[datetime]::new(2026,11,13,15,0,0)
+}
 $session.Mutation=$Mutation
 $week='<ScheduleByWeek><WeeksInterval>1</WeeksInterval><DaysOfWeek><Monday/><Tuesday/><Wednesday/><Thursday/><Friday/></DaysOfWeek></ScheduleByWeek>'
 foreach($item in @(@{Name='daily';Logon='Password'},@{Name='watchdog';Logon='InteractiveToken'})){
     $session.Definitions[$item.Name]='<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers><CalendarTrigger><StartBoundary>2026-01-02T08:15:00-05:00</StartBoundary><Enabled>true</Enabled>'+ $week +'</CalendarTrigger></Triggers><Principals><Principal id="Author"><UserId>synthetic-user</UserId><LogonType>'+ $item.Logon +'</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><Enabled>true</Enabled><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><ExecutionTimeLimit>PT7H</ExecutionTimeLimit></Settings><Actions Context="Author"><Exec><Command>synthetic.exe</Command><Arguments>synthetic-action</Arguments></Exec></Actions></Task>'
+}
+if($Scenario.StartsWith('disabled-') -or $Scenario -eq 'mixed-afternoon'){
+    foreach($name in @($session.Definitions.Keys)){
+        if($Scenario -eq 'mixed-afternoon' -and $name -eq 'watchdog'){continue}
+        $session.Definitions[$name]=$session.Definitions[$name].Replace('<Settings><Enabled>true','<Settings><Enabled>false')
+    }
+}
+if($Scenario -eq 'trigger-disabled-afternoon'){
+    foreach($name in @($session.Definitions.Keys)){
+        $session.Definitions[$name]=$session.Definitions[$name].Replace('<Enabled>true</Enabled>'+ $week,'<Enabled>false</Enabled>'+ $week)
+    }
 }
 if($Scenario -eq 'new-daily'){$session.Definitions.Remove('daily')}
 if($Scenario -eq 'new-task-partial'){$session.Definitions.Remove('watchdog')}
@@ -111,4 +133,4 @@ foreach($name in $session.Originals.Keys){
         }
     }else{$preserved=$false}
 }
-@{failure=$failure;rollback=$rollback;events=@($session.Events.ToArray());preserved=$preserved;disposed=$session.Disposed;definitions=$session.Definitions}|ConvertTo-Json -Compress -Depth 6
+@{failure=$failure;rollback=$rollback;events=@($session.Events.ToArray());preserved=$preserved;disposed=$session.Disposed;mutationApplied=$session.MutationApplied;definitions=$session.Definitions}|ConvertTo-Json -Compress -Depth 6

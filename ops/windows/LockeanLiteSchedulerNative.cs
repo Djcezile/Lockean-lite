@@ -167,7 +167,14 @@ namespace LockeanInstaller
             try
             {
                 dynamic task = folder.GetTask(name);
-                if (((int)task.State != 1 && (int)task.State != 3) || ((bool)task.Enabled &&
+                bool canExecute = false;
+                if ((bool)task.Enabled)
+                {
+                    dynamic triggers = task.Definition.Triggers;
+                    for (int index = 1; index <= (int)triggers.Count; index++)
+                        if ((bool)triggers.Item(index).Enabled) { canExecute = true; break; }
+                }
+                if (((int)task.State != 1 && (int)task.State != 3) || (canExecute &&
                     (DateTime)task.NextRunTime > DateTime.MinValue &&
                     (DateTime)task.NextRunTime <= DateTime.Now.AddMinutes(30)))
                     throw new InvalidOperationException("task_running");
@@ -295,6 +302,9 @@ namespace LockeanInstaller
                 }
                 else if (type == "InteractiveToken" && Sid(user) == Sid(CurrentUser)) logon = 3;
                 else throw new InvalidOperationException("unsupported_task_logon");
+                var enabled = document.SelectSingleNode("/t:Task/t:Settings/t:Enabled", ns);
+                if (flags != 1 && enabled != null && !XmlConvert.ToBoolean(enabled.InnerText.Trim()))
+                    flags |= 8; // TASK_DISABLE preserves disabled state without a transient enable.
                 object registered = folder.RegisterTask(name, xml, flags, user, temporaryPassword, logon, String.IsNullOrEmpty(security) ? null : security);
                 if (registered != null && Marshal.IsComObject(registered)) Marshal.ReleaseComObject(registered);
             }

@@ -184,17 +184,27 @@ configuration, so a receipt cannot authorize a silently changed target.
 Activation requires Windows PowerShell 5.1 in an elevated local operator
 console and the explicit `-OperatorCredentialEntry` switch. Run it only
 after independent review and separate deployment approval. Use an idle
-maintenance window at least 30 minutes before both of today's starts.
-The installer rejects a start that has passed or is less than 30 minutes
-away, avoiding a missed-start catch-up during registration.
+maintenance window. The installer chooses the next future weekday boundary
+for each corrected time, skipping elapsed starts and weekends. This permits
+afternoon maintenance without introducing a missed-start catch-up.
+
+An effectively enabled task (both task and trigger enabled) must have its
+planned first run more than 30 minutes away. This guard runs before
+credential entry and again immediately before each write. Windows service
+next-run state separately blocks an imminent or overdue enabled execution.
+Running, queued, and unknown task states always block installation,
+including when a task is otherwise disabled.
 
 Existing tasks keep their principal, logon type, actions, settings, and
 security descriptor. Daily uses Password logon and watchdog uses
 Interactive logon. A different existing logon policy fails preflight.
 Only each calendar trigger's start boundary changes. Fresh definitions
 use the same approved logon policy and the existing automation protections.
-Existing disabled tasks remain disabled and fail the enabled-state gate;
-their enablement needs a separately approved operational step.
+Existing task and trigger enabled states are captured and compared after
+registration. Disabled tasks stay disabled, and registration explicitly
+uses the Windows disable flag for those definitions. Disabled, idle tasks
+can be corrected during afternoon maintenance. Enablement remains a
+separately approved operational step that must reassess future run risk.
 
 The adapter requires an administrative token and checks the effective
 token against the root folder and task security descriptors. Task snapshots
