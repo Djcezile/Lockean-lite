@@ -80,11 +80,13 @@ namespace LockeanInstaller
                 var mapping = new GenericMapping { Read = 0x120089, Write = 0x120116,
                     Execute = 0x1200a0, All = 0x1f01ff };
                 uint size = 4096, granted;
+                uint required = mapping.All;
+                if (descriptor.SystemAcl != null) required |= 0x01000000; // ACCESS_SYSTEM_SECURITY
                 bool status;
-                if (!AccessCheck(pinned.AddrOfPinnedObject(), token, mapping.All, ref mapping,
+                if (!AccessCheck(pinned.AddrOfPinnedObject(), token, required, ref mapping,
                     privileges, ref size, out granted, out status))
                     throw new InvalidOperationException("task_access_check_failed");
-                return status && (granted & mapping.All) == mapping.All;
+                return status && (granted & required) == required;
             }
             finally
             {
@@ -151,7 +153,8 @@ namespace LockeanInstaller
         {
             try
             {
-                string descriptor = (string)folder.GetTask(name).GetSecurityDescriptor(7);
+                // Include auditing metadata. Refuse an unreadable SACL rather than losing it.
+                string descriptor = (string)folder.GetTask(name).GetSecurityDescriptor(15);
                 if (!HasTaskManagementAccess(descriptor))
                     throw new InvalidOperationException("task_write_or_recovery_access_denied");
                 return descriptor;
@@ -164,7 +167,7 @@ namespace LockeanInstaller
             try
             {
                 dynamic task = folder.GetTask(name);
-                if ((int)task.State == 4 || ((bool)task.Enabled &&
+                if (((int)task.State != 1 && (int)task.State != 3) || ((bool)task.Enabled &&
                     (DateTime)task.NextRunTime > DateTime.MinValue &&
                     (DateTime)task.NextRunTime <= DateTime.Now.AddMinutes(30)))
                     throw new InvalidOperationException("task_running");
@@ -293,7 +296,7 @@ namespace LockeanInstaller
                 else if (type == "InteractiveToken" && Sid(user) == Sid(CurrentUser)) logon = 3;
                 else throw new InvalidOperationException("unsupported_task_logon");
                 object registered = folder.RegisterTask(name, xml, flags, user, temporaryPassword, logon, String.IsNullOrEmpty(security) ? null : security);
-                if (Marshal.IsComObject(registered)) Marshal.ReleaseComObject(registered);
+                if (registered != null && Marshal.IsComObject(registered)) Marshal.ReleaseComObject(registered);
             }
             catch (Exception error) { throw SafeFailure("task_registration_failed", error); }
             finally

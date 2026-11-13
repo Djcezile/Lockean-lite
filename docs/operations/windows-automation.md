@@ -197,7 +197,12 @@ Existing disabled tasks remain disabled and fail the enabled-state gate;
 their enablement needs a separately approved operational step.
 
 The adapter requires an administrative token and checks the effective
-token against the root folder and task security descriptors. It backs up
+token against the root folder and task security descriptors. Task snapshots
+include owner, group, DACL, and audit SACL. Reading auditing metadata requires
+the corresponding Windows security privilege; the installer fails closed
+if the operator context cannot read it and does not enable privileges or
+change system policy. An existing SACL also requires audit-security access
+for restoration. It backs up
 both original XML definitions and security descriptors before entering
 credentials or mutating tasks. It refuses running tasks and tasks with
 an imminent existing run. All changes require the genuine verification

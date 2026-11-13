@@ -6,7 +6,14 @@ Add-Type -TypeDefinition @"
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+public class SyntheticTask {
+    public int State = 2;
+    public bool Enabled = true;
+    public DateTime NextRunTime = DateTime.Now.AddHours(2);
+}
 public class SyntheticTaskFolder {
+    public SyntheticTask Task = new SyntheticTask();
+    public SyntheticTask GetTask(string name) { return Task; }
     public bool Fail;
     public int Calls;
     public bool Authenticated = true;
@@ -16,7 +23,7 @@ public class SyntheticTaskFolder {
         LastFlags=flags;
         Authenticated &= logon == 1 && (string)password == "SYNTHETIC_PASSWORD_ONLY";
         if(Fail) throw new COMException("must never escape: " + password, unchecked((int)0x8007052e));
-        return new object();
+        return flags == 1 ? null : new object();
     }
 }
 "@
@@ -33,6 +40,11 @@ $credentialType.GetField('Password',$flags).SetValue($credential,$secure)
 $credentials=$native.GetType().GetField('credentials',$flags).GetValue($native)
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $credentials.Add($sid,$credential)
+$queuedRejected=$false
+try{$native.RequireIdle('synthetic')}catch{$queuedRejected=$true}
+if(-not $queuedRejected){throw 'queued_task_not_rejected'}
+$folder.Task.State=3
+$native.RequireIdle('synthetic')
 $fullAccess=[LockeanInstaller.SchedulerSession]::HasTaskManagementAccess('O:'+ $sid +'G:'+ $sid +'D:(A;;FA;;;'+$sid+')')
 $readAccess=[LockeanInstaller.SchedulerSession]::HasTaskManagementAccess('O:'+ $sid +'G:'+ $sid +'D:(A;;FR;;;'+$sid+')')
 if(-not $fullAccess -or $readAccess){throw 'native_access_check_failed'}
