@@ -166,7 +166,7 @@ Only after all four pass does it write
 ```powershell
 .\ops\windows\Install-LockeanLiteAutomation.ps1 `
   -RepoRoot $repo `
-  -Activate
+  -Activate -OperatorCredentialEntry
 ```
 
 Activation backs up any existing task XML, registers
@@ -179,35 +179,78 @@ only a newly created task).
 The receipt also binds the repository path and SHA-256 of the staged
 configuration, so a receipt cannot authorize a silently changed target.
 
-## Password-logon deployment gate
+## Protected operator credential entry
 
-Before activation, inspect each installed task's principal, logon type,
-settings, and security descriptor. A deployment operator needs task update
-rights. An elevated operator token can provide the existing Administrators
-rights without widening the task ACL.
+Activation requires Windows PowerShell 5.1 in an elevated local operator
+console and the explicit `-OperatorCredentialEntry` switch. Run it only
+after independent review and separate deployment approval. Use an idle
+maintenance window at least 30 minutes before both of today's starts.
+The installer rejects a start that has passed or is less than 30 minutes
+away, avoiding a missed-start catch-up during registration.
 
-The current installer constructs both tasks with Interactive logon. It
-does not preserve an installed Password-logon principal, and its XML-only
-rollback supplies no password. Windows requires an account password for
-Password-logon registration and restoration. An exported task definition
-does not include that password. Treat an existing Password-logon task as
-a deployment blocker with the current installer.
+Existing tasks keep their principal, logon type, actions, settings, and
+security descriptor. Daily uses Password logon and watchdog uses
+Interactive logon. A different existing logon policy fails preflight.
+Only each calendar trigger's start boundary changes. Fresh definitions
+use the same approved logon policy and the existing automation protections.
+Existing disabled tasks remain disabled and fail the enabled-state gate;
+their enablement needs a separately approved operational step.
 
-A reviewed correction must establish a protected, operator-controlled
-credential entry and registration boundary before any task mutation. It
-must retain each original principal and task settings, authenticate the
-Password recovery path before activation, and preserve the activation
-failure separately from any rollback failure. Credential values must stay
-out of command arguments, transcripts, logs, diagnostics, and evidence.
+The adapter requires an administrative token and checks the effective
+token against the root folder and task security descriptors. It backs up
+both original XML definitions and security descriptors before entering
+credentials or mutating tasks. It refuses running tasks and tasks with
+an imminent existing run. All changes require the genuine verification
+receipt for the exact source and configuration.
 
-Choosing Interactive logon for a task that currently uses Password logon
-changes whether it can run without an existing user session. That choice
-requires an explicit deployment policy decision and a viable recovery plan
-for the original Password-logon task.
+The operator enters the Windows password directly into the Windows
+secure-desktop credential dialog. Password input is never a PowerShell
+parameter, environment variable, command-line argument, repository file,
+or diagnostic payload. Do not enter it into chat, recorded terminal input,
+or a screen-sharing session. Cancellation, a different account, an empty
+password, or failed batch authentication blocks installation. Windows
+Hello or certificate credentials that cannot supply the required
+Password-logon secret also fail closed.
 
-Windows registration requirements and task access rights are documented in
-[TaskFolder.RegisterTask](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertask)
-and [Security Contexts for Tasks](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks).
+`LockeanLiteSchedulerNative.cs` is compiled from the pinned, clean source.
+It keeps the password in a private SecureString for the transaction.
+It checks the entered account SID and authenticates a batch logon before
+validating both the recovery XML and replacement XML with Task Scheduler's
+validation-only mode. Validation-only mode checks the definition; the
+batch logon supplies the authentication check. These prerequisites reduce
+recovery risk but cannot guarantee recovery during a service outage,
+permission change, credential revocation, or concurrent operator action.
+
+Windows APIs require transient plaintext. The adapter clears the
+credential-provider blob, unmanaged password buffers, and the pinned
+temporary managed string used for COM marshaling. It disposes cached
+SecureStrings after success or failure. Runtime, COM, OS, provider, and
+crash-dump copies remain a security limitation; buffer clearing is not
+proof that every copy was erased. Use a trusted local host.
+
+Registration and restoration use the same authenticated credential cache.
+Updates preserve the original security descriptor and suppress
+registration-trigger execution. Failed or partial writes are recovered in
+reverse order, including the failing write. Both restoration and removal
+are read back. Recovery continues if one rollback fails. The original
+sanitized activation error is rethrown with separate RollbackFailures
+metadata and a BLOCKED warning. Provider exception messages and inner
+exceptions are excluded; HRESULT and any Win32 error metadata are retained.
+A rollback failure requires operator intervention using the original
+backups. Do not blindly retry or clear historical run receipts.
+
+Engineering tests use synthetic credentials and a fake registration
+target. They compile the native adapter and check synthetic Windows access
+descriptors without entering real credentials. Tests should run with
+inherited credential variables removed and pytest 9.2.0 or later to avoid
+the known Windows oversized-test-name diagnostic failure. Secure-desktop
+entry, actual account authentication, persisted registration, and recovery
+still require separately authorized Windows acceptance.
+
+[Windows credential UI](https://learn.microsoft.com/en-us/windows/win32/api/wincred/nf-wincred-creduipromptforwindowscredentialsw),
+[task registration](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertask),
+and [task access rights](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks)
+define the native contracts.
 
 ## Verify the activated tasks
 
@@ -322,8 +365,9 @@ opportunity.
 
 ## Known limitations
 
-- This release is Windows-local and paper-only. It has not been deployed or
-  syntax-executed on the user's Windows host by the Linux CI/workspace.
+- The installer has synthetic Windows test and unregistered serialization
+  evidence. Real credential entry, Password authentication, persisted
+  registration, and rollback acceptance remain pending.
 - Both tasks depend on the same computer, current-user login, network, Alpaca,
   and Task Scheduler. The watchdog is not an external uptime service.
 - Operating costs and all-in net P&L remain unmeasured.

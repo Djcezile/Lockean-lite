@@ -51,7 +51,8 @@ def test_installer_requires_same_commit_verification_before_activation():
     assert "verification_" in text
     assert "live_notification_verified" in text
     assert "config_sha256" in text
-    assert "Export-ScheduledTask" in text
+    assert "$Session.ReadXml" in text
+    assert "$Session.ReadSecurity" in text
     assert "WakeToRun" in text
     assert "IgnoreNew" in text
     assert "LockeanLite-Watchdog" in text
@@ -84,7 +85,7 @@ def _installer_trigger_boundaries():
     # Execute just the trigger construction with a mock for the native cmdlet.
     # The mock reproduces the observed Windows cmdlet's UTC serialization.
     start = installer.index("$weekdays = ")
-    end = installer.index("$settings =", start)
+    end = installer.index("$snapshots =", start)
     script = r"""
 $ErrorActionPreference = 'Stop'
 function New-ScheduledTaskTrigger {
@@ -106,6 +107,7 @@ $config = @{ daily_start = '09:15'; watchdog_start = '09:20' }
         [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
         capture_output=True, text=True, check=True, timeout=20,
     )
+    assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
 
@@ -165,78 +167,97 @@ _TRIGGER_ENABLED = "<Enabled>true</Enabled>"
     pytest.param(_WEEK, _WEEK + "<ScheduleByDay/>", False, id="mixed-recurrence"),
 ])
 def test_installer_validates_registered_schedule_and_rolls_back(old, new, accepted):
+    mutation = {"old": old, "new": new} if old else {"old": "unchanged-sentinel", "new": ""}
+    actual = _run_installation_scenario("tampered-readback", mutation)
+    assert bool(actual["failure"]) is (not accepted)
+    if not accepted:
+        assert actual["events"][-2:] == ["restore:watchdog", "restore:daily"]
+    assert actual["disposed"]
+
+
+def _run_installation_scenario(scenario, mutation=None):
     powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
     if powershell is None:
-        pytest.skip("PowerShell is required for offline installer fragment tests")
+        pytest.skip("PowerShell is required for offline installer tests")
+    args = [
+        powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+        str(ROOT / "tests" / "helpers" / "windows_installer_harness.ps1"),
+        "-Installer", str(OPS / "Install-LockeanLiteAutomation.ps1"),
+        "-Scenario", scenario,
+    ]
+    if mutation is not None:
+        args += ["-Mutation", json.dumps(mutation)]
+    result = subprocess.run(args, capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "SYNTHETIC_ROLLBACK_PASSWORD_MARKER" not in result.stdout + result.stderr
+    return json.loads(result.stdout)
 
-    xml = (
-        f'<Task xmlns="{_TASK_NS}"><Triggers><CalendarTrigger>'
-        f"<StartBoundary>2026-11-10T09:20:00</StartBoundary>{_TRIGGER_ENABLED}{_WEEK}"
-        "</CalendarTrigger></Triggers><Settings><Enabled>true</Enabled></Settings></Task>"
-    )
-    daily_xml = xml.replace("09:20", "09:15")
-    watchdog_xml = xml.replace(old, new, 1) if old else xml
-    installer = (OPS / "Install-LockeanLiteAutomation.ps1").read_text(encoding="utf-8")
-    start = installer.index("\ntry {\n")
-    end = installer.index("\nWrite-Host 'Activated", start)
-    # Execute the actual try/catch with every scheduler command replaced by a local mock.
-    script = r"""
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-$dailyName = 'daily'
-$watchdogName = 'watchdog'
-$dailyBoundary = '2026-11-10T09:15:00'
-$watchdogBoundary = '2026-11-10T09:20:00'
-$dailyBackup = '<prior-daily/>'
-$watchdogBackup = $null
-$dailyAction = $watchdogAction = $dailyTrigger = $watchdogTrigger = $settings = $principal = $null
-$ApprovedCommit = 'fixture'
-$weekdays = @('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday')
-$events = [System.Collections.Generic.List[string]]::new()
-function New-ScheduledTask {
-    param($Action, $Trigger, $Settings, $Principal, $Description)
-    'synthetic-task'
-}
-function Register-ScheduledTask {
-    param($TaskName, $InputObject, $Xml, [switch]$Force)
-    if ($PSBoundParameters.ContainsKey('Xml')) {
-        if ($Xml -cne '<prior-daily/>') { throw 'wrong backup XML' }
-        $events.Add("restore:$TaskName")
-    } else {
-        $events.Add("register:$TaskName")
+
+@pytest.mark.parametrize("scenario", [
+    "permission", "missing-credential", "incorrect-credential",
+    "invalid-recovery", "running", "wrong-logon", "late-window",
+])
+def test_installation_preflight_rejects_before_any_task_write(scenario):
+    actual = _run_installation_scenario(scenario)
+    assert actual["failure"]
+    assert not any(event.startswith(("write:", "restore:", "remove:")) for event in actual["events"])
+    assert actual["disposed"]
+
+
+def test_installation_preserves_settings_and_authenticates_before_mutation():
+    actual = _run_installation_scenario("valid")
+    assert actual["failure"] == ""
+    assert actual["preserved"]
+    assert actual["disposed"]
+    assert actual["events"].index("authenticate") < actual["events"].index("write:daily")
+    assert actual["events"].count("validate:daily") == 2
+    assert actual["events"].count("validate:watchdog") == 2
+    assert "<LogonType>Password</LogonType>" in actual["definitions"]["daily"]
+    assert "<LogonType>InteractiveToken</LogonType>" in actual["definitions"]["watchdog"]
+
+
+@pytest.mark.parametrize("scenario", ["partial", "rollback-fails", "both-rollbacks-fail"])
+def test_activation_error_survives_partial_installation_and_all_rollback_attempts(scenario):
+    actual = _run_installation_scenario(scenario)
+    assert "synthetic_activation_failure" in actual["failure"]
+    assert actual["events"][-2:] == ["restore:watchdog", "restore:daily"]
+    assert len(actual["rollback"]) == {"partial": 0, "rollback-fails": 1, "both-rollbacks-fail": 2}[scenario]
+    assert actual["disposed"]
+
+
+def test_new_task_is_removed_and_existing_task_restored_after_partial_failure():
+    actual = _run_installation_scenario("new-task-partial")
+    assert "synthetic_activation_failure" in actual["failure"]
+    assert actual["events"][-2:] == ["remove:watchdog", "restore:daily"]
+    assert "watchdog" not in actual["definitions"]
+
+
+def test_security_descriptor_drift_causes_rollback():
+    actual = _run_installation_scenario("security-drift")
+    assert actual["failure"]
+    assert "restore:daily" in actual["events"]
+
+
+def test_native_adapter_password_registration_restoration_and_error_redaction():
+    powershell = shutil.which("powershell.exe")
+    if powershell is None:
+        pytest.skip("Windows PowerShell is required for the compiled native adapter probe")
+    result = subprocess.run([
+        powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+        str(ROOT / "tests" / "helpers" / "windows_native_adapter_probe.ps1"),
+        "-NativeSource", str(OPS / "LockeanLiteSchedulerNative.cs"),
+    ], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "SYNTHETIC_PASSWORD_ONLY" not in result.stdout + result.stderr
+    assert json.loads(result.stdout) == {
+        "authenticated": True, "calls": 4, "hresult": -2147023570,
+        "sanitized": True, "disposed": True, "accessChecks": True,
     }
-}
-function Unregister-ScheduledTask {
-    [CmdletBinding(SupportsShouldProcess)]
-    param($TaskName)
-    $events.Add("remove:$TaskName")
-}
-function Get-ScheduledTask {
-    [CmdletBinding()]
-    param($TaskName)
-    $TaskName
-}
-function Export-ScheduledTask {
-    param($TaskName)
-    $definitions[$TaskName]
-}
-""" + f"""
-$definitions = @{{
-    daily = '{daily_xml}'
-    watchdog = '{watchdog_xml}'
-}}
-""" + "try {\n" + installer[start:end] + r"""
-    $accepted = $true
-} catch {
-    $accepted = $false
-}
-@{ accepted = $accepted; events = $events } | ConvertTo-Json -Compress
-"""
-    result = subprocess.run(
-        [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
-        capture_output=True, text=True, check=True, timeout=20,
-    )
-    expected_events = ["register:daily", "register:watchdog"]
-    if not accepted:
-        expected_events += ["restore:daily", "remove:watchdog"]
-    assert json.loads(result.stdout) == {"accepted": accepted, "events": expected_events}
+
+
+
+def test_fresh_daily_uses_password_and_authentication():
+    actual = _run_installation_scenario("new-daily")
+    assert actual["failure"] == ""
+    assert "<LogonType>Password</LogonType>" in actual["definitions"]["daily"]
+    assert actual["events"].index("authenticate") < actual["events"].index("write:daily")
