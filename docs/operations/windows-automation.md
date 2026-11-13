@@ -179,6 +179,36 @@ only a newly created task).
 The receipt also binds the repository path and SHA-256 of the staged
 configuration, so a receipt cannot authorize a silently changed target.
 
+## Password-logon deployment gate
+
+Before activation, inspect each installed task's principal, logon type,
+settings, and security descriptor. A deployment operator needs task update
+rights. An elevated operator token can provide the existing Administrators
+rights without widening the task ACL.
+
+The current installer constructs both tasks with Interactive logon. It
+does not preserve an installed Password-logon principal, and its XML-only
+rollback supplies no password. Windows requires an account password for
+Password-logon registration and restoration. An exported task definition
+does not include that password. Treat an existing Password-logon task as
+a deployment blocker with the current installer.
+
+A reviewed correction must establish a protected, operator-controlled
+credential entry and registration boundary before any task mutation. It
+must retain each original principal and task settings, authenticate the
+Password recovery path before activation, and preserve the activation
+failure separately from any rollback failure. Credential values must stay
+out of command arguments, transcripts, logs, diagnostics, and evidence.
+
+Choosing Interactive logon for a task that currently uses Password logon
+changes whether it can run without an existing user session. That choice
+requires an explicit deployment policy decision and a viable recovery plan
+for the original Password-logon task.
+
+Windows registration requirements and task access rights are documented in
+[TaskFolder.RegisterTask](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertask)
+and [Security Contexts for Tasks](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks).
+
 ## Verify the activated tasks
 
 ```powershell
