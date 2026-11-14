@@ -98,6 +98,16 @@ task. Initial partial creation attempts are cleaned up only through the same
 allowlisted, harmless-definition/disabled-idle checks. Unrecoverable cleanup stays
 BLOCKED and names the affected disposable task.
 
+Recovery-capture or normalized-snapshot read-back failure after fixture creation
+also returns BLOCKED. The primary ActivationError field contains the sanitized
+capture HRESULT with a `capture_` label. The tool attempts guarded removal of both
+known fixtures in reverse order and checks that each removal persisted.
+RollbackFailures entries labelled `cleanup_` identify unresolved or uncertain
+fixture identities independently of the capture error. Retain the configured
+RecoveryDirectory and all partially written files, including an empty directory;
+record its path alongside the result. Do not treat partial files as a usable
+recovery set, delete them automatically, or retry into the same evidence directory.
+
 ## Disposable recovery and cleanup
 
 `Restore-LockeanLiteAcceptanceFixtures.ps1` validates all four exact files before

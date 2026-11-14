@@ -1,9 +1,12 @@
 """Offline-only acceptance qualification. No native task mutation or credential UI."""
 from functools import cache
 import json
+import hashlib
+import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 
 import pytest
 
@@ -16,10 +19,17 @@ def probe():
     shell = shutil.which("powershell.exe")
     if shell is None:
         pytest.skip("Windows PowerShell 5.1 required for native offline tooling probe")
+    evidence = Path(os.environ.get("LOCKEAN_CAPTURE_EVIDENCE_ROOT") or tempfile.mkdtemp(prefix="lockean-capture-evidence-"))
+    evidence.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "LOCKEAN_CAPTURE_EVIDENCE_ROOT": str(evidence)}
     result = subprocess.run([
         shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
         str(ROOT / "tests/helpers/windows_acceptance_probe.ps1"), "-Ops", str(OPS),
-    ], capture_output=True, text=True, timeout=60, check=False)
+    ], capture_output=True, text=True, timeout=60, check=False, env=env)
+    inventory = [{"path": str(path.relative_to(evidence)), "directory": path.is_dir(),
+                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None}
+                 for path in sorted(evidence.rglob("*"))]
+    (evidence / "ARTIFACT-INVENTORY.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
     # Never forward arbitrary subprocess diagnostics to pytest assertion output.
     assert result.returncode == 0, "offline acceptance probe failed; inspect sanitized probe status"
     assert "SYNTHETIC_SECRET_MARKER" not in result.stdout + result.stderr
@@ -44,6 +54,15 @@ def test_every_adapter_operation_rejects_production_and_alias_names(operation):
 ])
 def test_acceptance_and_recovery_contracts(case):
     assert probe()[case]
+
+
+@pytest.mark.parametrize("scenario", [
+    "failure", "partial_directory", "partial_file", "cleanup_failure", "both_cleanup_fail",
+    "running_guard", "enabled_guard", "action_guard", "cleanup_no_effect", "readback_failure",
+    "success", "success_then_rollback",
+])
+def test_recovery_capture_failure_cleans_only_guarded_fixtures_and_retains_evidence(scenario):
+    assert probe()["capture_" + scenario]
 
 
 @pytest.mark.parametrize("case", [

@@ -255,6 +255,7 @@ namespace LockeanAcceptance
             // Validate both recovery definitions before the first fixture write.
             foreach (string n in names) session.Validate(n,originals[n],security);
             var created = new List<string>();
+            string failureStage = "activation";
             try
             {
                 foreach(string n in names)
@@ -263,18 +264,27 @@ namespace LockeanAcceptance
                     created.Add(n); session.Write(n,originals[n],security,false);
                     session.Verify(n,originals[n],security);
                 }
+                failureStage = "capture";
+                if(saveRecovery!=null) saveRecovery();
+                // Capture and its normalized read-back share creation's guarded cleanup.
+                foreach(string n in names) originals[n]=session.ReadXml(n);
             }
             catch(Exception initial)
             {
                 var failures = new List<string>();
                 foreach(string n in created.AsEnumerable().Reverse())
-                    try { if(session.ReadXml(n)!=null) session.Remove(n); }
+                    try
+                    {
+                        if(session.ReadXml(n)!=null)
+                        {
+                            session.Remove(n);
+                            if(session.ReadXml(n)!=null) throw new InvalidOperationException("fixture_cleanup_readback_failed");
+                        }
+                    }
                     catch(Exception e) { failures.Add(n+":"+GuardedSession.Safe("cleanup",e).Message); }
-                return new DrillResult {Status="BLOCKED",ActivationError=GuardedSession.Safe("activation",initial).Message,RollbackFailures=failures.ToArray()};
+                // Never delete partial recovery artifacts; the configured capture path is forensic evidence.
+                return new DrillResult {Status="BLOCKED",ActivationError=GuardedSession.Safe(failureStage,initial).Message,RollbackFailures=failures.ToArray()};
             }
-            if(saveRecovery!=null) saveRecovery();
-            // Retain the service's actual normalized originals as recovery targets.
-            foreach(string n in names) originals[n]=session.ReadXml(n);
             var attempted = new List<string>();
             Exception activation = null;
             try

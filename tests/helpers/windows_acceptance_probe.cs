@@ -10,19 +10,25 @@ public sealed class Fake : ITaskBackend {
     public Dictionary<string,string> Xml = new Dictionary<string,string>();
     public Dictionary<string,string> Security = new Dictionary<string,string>();
     public int Calls, Writes;
+    public List<string> ObservedNames = new List<string>(), Removals = new List<string>();
+    public HashSet<string> FailedRemovals = new HashSet<string>(), DroppedRemovals = new HashSet<string>(), FailNextRead = new HashSet<string>();
     public bool Running, FailAuth, DriftXml, DriftSecurity, FailPermission;
     public void CheckPermissions() { Calls++; if(FailPermission)throw new Exception("SYNTHETIC_SECRET_MARKER"); }
-    public string ReadXml(string n) { Calls++; return Xml.ContainsKey(n) ? Xml[n] : null; }
-    public string ReadSecurity(string n) { Calls++; return Security[n]; }
-    public void RequireIdle(string n) { Calls++; if(Running) throw new Exception("SYNTHETIC_SECRET_MARKER"); }
-    public void Authenticate(string n,string u) { Calls++; if(FailAuth) throw new Exception("SYNTHETIC_SECRET_MARKER"); }
-    public void Validate(string n,string x,string s) { Calls++; }
-    public string NormalizeXml(string n,string x) { Calls++; return x; }
+    public string ReadXml(string n) { Calls++; ObservedNames.Add(n); if(FailNextRead.Remove(n))throw new COMException("SYNTHETIC_SECRET_MARKER",unchecked((int)0x80070070));return Xml.ContainsKey(n) ? Xml[n] : null; }
+    public string ReadSecurity(string n) { Calls++; ObservedNames.Add(n); return Security[n]; }
+    public void RequireIdle(string n) { Calls++; ObservedNames.Add(n); if(Running) throw new Exception("SYNTHETIC_SECRET_MARKER"); }
+    public void Authenticate(string n,string u) { Calls++; ObservedNames.Add(n); if(FailAuth) throw new Exception("SYNTHETIC_SECRET_MARKER"); }
+    public void Validate(string n,string x,string s) { Calls++; ObservedNames.Add(n); }
+    public string NormalizeXml(string n,string x) { Calls++; ObservedNames.Add(n); return x; }
     public void Write(string n,string x,string s,bool e) {
-        Calls++; Writes++; Xml[n]=DriftXml ? x.Replace("IgnoreNew","Parallel") : x;
+        Calls++; Writes++; ObservedNames.Add(n); Xml[n]=DriftXml ? x.Replace("IgnoreNew","Parallel") : x;
         Security[n]=DriftSecurity ? "O:SYG:SYD:(A;;FR;;;SY)" : s;
     }
-    public void Remove(string n) { Calls++; Xml.Remove(n); Security.Remove(n); }
+    public void Remove(string n) {
+        Calls++; ObservedNames.Add(n); Removals.Add(n);
+        if(FailedRemovals.Contains(n))throw new COMException("SYNTHETIC_SECRET_MARKER",unchecked((int)0x80070005));
+        if(!DroppedRemovals.Contains(n)){Xml.Remove(n);Security.Remove(n);}
+    }
     public void Dispose() {}
 }
 public static class Probe {
@@ -126,6 +132,61 @@ public static class Probe {
             }});
         }
         check("cleanup_guard",()=>{var f=new Fake();f.Xml[daily]=xml.Replace("/d /c exit 0","evil");using(var s=Session(p,f)){Need(Reject(()=>s.Remove(daily)));Need(f.Xml.Count==1);}});
+        foreach(string scenario in new[]{"failure","partial_directory","partial_file","cleanup_failure","both_cleanup_fail",
+            "running_guard","enabled_guard","action_guard","cleanup_no_effect","readback_failure","success","success_then_rollback"}) {
+            string scenarioCopy=scenario;
+            check("capture_"+scenarioCopy,()=>{
+                string root=Environment.GetEnvironmentVariable("LOCKEAN_CAPTURE_EVIDENCE_ROOT");
+                Need(!String.IsNullOrEmpty(root));
+                string partial=Path.Combine(root,scenarioCopy+"-"+Guid.NewGuid());
+                string artifact=Path.Combine(partial,"partial.xml");
+                var f=new Fake(); bool captured=false; string retainedHash=null;
+                using(var s=Session(p,f)) {
+                    Action capture=()=>{
+                        Need(f.Writes==2 && f.Xml.Count==2);captured=true;
+                        if(scenarioCopy!="failure")Directory.CreateDirectory(partial);
+                        if(scenarioCopy!="failure" && scenarioCopy!="partial_directory") {
+                            File.WriteAllText(artifact,"<Task>SYNTHETIC_PARTIAL_EVIDENCE");
+                            retainedHash=BackupFiles.Hash(artifact);
+                        }
+                        if(scenarioCopy=="cleanup_failure" || scenarioCopy=="both_cleanup_fail")f.FailedRemovals.Add(watch);
+                        if(scenarioCopy=="both_cleanup_fail")f.FailedRemovals.Add(daily);
+                        if(scenarioCopy=="cleanup_no_effect")f.DroppedRemovals.Add(watch);
+                        if(scenarioCopy=="running_guard")f.Running=true;
+                        if(scenarioCopy=="enabled_guard")f.Xml[watch]=f.Xml[watch].Replace("<Enabled>false</Enabled>","<Enabled>true</Enabled>");
+                        if(scenarioCopy=="action_guard")f.Xml[watch]=f.Xml[watch].Replace("/d /c exit 0","/c unsafe");
+                        if(scenarioCopy=="readback_failure"){f.FailNextRead.Add(watch);return;}
+                        if(scenarioCopy=="success" || scenarioCopy=="success_then_rollback")return;
+                        throw new COMException("SYNTHETIC_SECRET_MARKER",unchecked((int)0x80070070));
+                    };
+                    var result=Drill.Run(s,"S-1-5-18",Sddl,
+                        scenarioCopy=="success_then_rollback"?DrillFault.PartialWrite:DrillFault.None,capture);
+                    Need(captured && f.ObservedNames.All(n=>n==daily || n==watch));
+                    if(scenarioCopy!="failure")Need(Directory.Exists(partial));
+                    if(retainedHash!=null)Need(File.Exists(artifact) && BackupFiles.Hash(artifact)==retainedHash);
+                    if(scenarioCopy=="success" || scenarioCopy=="success_then_rollback") {
+                        Need(f.Writes==6 && f.Removals.Count==0 && f.Xml.Count==2);
+                        Need(result.Status==(scenarioCopy=="success"?"PASS":"BLOCKED"));
+                        Need(result.ActivationError==(scenarioCopy=="success"?"":"activation_0x80131509"));
+                        Need(result.RollbackFailures.Length==0);return;
+                    }
+                    Need(result.Status=="BLOCKED" && result.ActivationError=="capture_0x80070070");
+                    Need(f.Writes==2); // Never reach candidate writes after failed capture.
+                    int unresolved=scenarioCopy=="both_cleanup_fail" || scenarioCopy=="running_guard"?2:
+                        new[]{"cleanup_failure","enabled_guard","action_guard","cleanup_no_effect"}.Contains(scenarioCopy)?1:0;
+                    Need(f.Xml.Count==unresolved && result.RollbackFailures.Length==unresolved);
+                    if(unresolved>0) {
+                        Need(result.RollbackFailures[0].StartsWith(watch+":cleanup_"));
+                        if(unresolved==2)Need(result.RollbackFailures[1].StartsWith(daily+":cleanup_"));
+                    }
+                    if(scenarioCopy=="cleanup_failure")Need(result.RollbackFailures[0]==watch+":cleanup_0x80070005");
+                    if(scenarioCopy=="running_guard")Need(f.Removals.Count==0);
+                    else if(scenarioCopy=="enabled_guard" || scenarioCopy=="action_guard")Need(f.Removals.SequenceEqual(new[]{daily}));
+                    else Need(f.Removals.SequenceEqual(new[]{watch,daily}));
+                }
+                // Forensic files/directories deliberately remain for the test evidence inventory.
+            });
+        }
         string temp=Path.Combine(Path.GetTempPath(),"lockean-synthetic-"+Guid.NewGuid());Directory.CreateDirectory(temp);
         try {
             string file=Path.Combine(temp,"original.xml");File.WriteAllText(file,xml);
