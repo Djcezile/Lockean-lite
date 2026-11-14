@@ -70,6 +70,7 @@ public static class Probe {
             });
         }
         check("approval_before_native_connection",()=>Need(Reject(()=>GuardedSession.CreateNative(p,false,false))));
+        check("no_public_backend_injection",()=>Need(typeof(GuardedSession).GetConstructors().Length==0));
         check("permission_failure",()=>{var f=new Fake{FailPermission=true};using(var s=Session(p,f)){Need(Reject(()=>Drill.Run(s,"S-1-5-18",Sddl,DrillFault.None)));Need(f.Writes==0);}});
         check("existing_fixture",()=>{var f=new Fake();f.Xml[daily]=xml;using(var s=Session(p,f)){Need(Reject(()=>Drill.Run(s,"S-1-5-18",Sddl,DrillFault.None)));Need(f.Writes==0);}});
         check("native_normalization_guard",()=>{

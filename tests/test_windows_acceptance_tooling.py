@@ -40,7 +40,7 @@ def test_every_adapter_operation_rejects_production_and_alias_names(operation):
     "backup_hash", "backup_path", "backup_disabled", "backup_missing", "native_serialization",
     "no_mutation_approval", "backup_valid", "native_adapter_private", "xml_external_entity",
     "recovery_pins", "recovery_valid", "recovery_auth", "recovery_drift", "recovery_all_attempted",
-    "backup_unc", "permission_failure", "existing_fixture", "native_normalization_guard",
+    "backup_unc", "permission_failure", "existing_fixture", "native_normalization_guard", "no_public_backend_injection",
 ])
 def test_acceptance_and_recovery_contracts(case):
     assert probe()[case]

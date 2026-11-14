@@ -123,7 +123,7 @@ namespace LockeanAcceptance
         private readonly HashSet<string> authenticated = new HashSet<string>(StringComparer.Ordinal);
         public TaskPolicy Policy { get { return policy; } }
         internal bool IsNative {get {return backend is NativeBackend;}}
-        public GuardedSession(TaskPolicy policy, ITaskBackend synthetic, bool approveMutation, bool approveCredential)
+        internal GuardedSession(TaskPolicy policy, ITaskBackend synthetic, bool approveMutation, bool approveCredential)
         {
             this.policy = policy; backend = synthetic; mutations = approveMutation; credentials = approveCredential;
         }
